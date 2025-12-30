@@ -1,0 +1,365 @@
+# OpenTelemetry Collector Configuration for Windows System Event Log
+# This configuration ingests System event logs and transforms them to human-readable format
+
+receivers:
+  windowseventlog/system:
+    channel: System
+    max_reads: 100
+    start_at: end
+    poll_interval: 1s
+    attributes:
+      log.source: "windows.system"
+    raw: true  # Get raw XML for full parsing
+
+processors:
+  # Extract and parse EventData XML fields
+  transform/system_eventdata:
+    log_statements:
+      - context: log
+        statements:
+          # Extract event record ID
+          - set(attributes["event.record_id"], body["Event"]["System"]["EventRecordID"]) where body["Event"]["System"]["EventRecordID"] != nil
+
+          # Extract provider name
+          - set(attributes["event.provider"], body["Event"]["System"]["Provider"]["@Name"]) where body["Event"]["System"]["Provider"]["@Name"] != nil
+
+          # Extract event ID
+          - set(attributes["event.id"], body["Event"]["System"]["EventID"]) where body["Event"]["System"]["EventID"] != nil
+
+          # Extract event level
+          - set(attributes["event.level"], body["Event"]["System"]["Level"]) where body["Event"]["System"]["Level"] != nil
+
+          # Extract computer name
+          - set(attributes["host.name"], body["Event"]["System"]["Computer"]) where body["Event"]["System"]["Computer"] != nil
+
+          # Extract user SID
+          - set(attributes["user.sid"], body["Event"]["System"]["Security"]["@UserID"]) where body["Event"]["System"]["Security"]["@UserID"] != nil
+
+          # Extract time created
+          - set(attributes["event.created"], body["Event"]["System"]["TimeCreated"]["@SystemTime"]) where body["Event"]["System"]["TimeCreated"]["@SystemTime"] != nil
+
+  # Transform Event IDs to human-readable descriptions
+  transform/system_event_descriptions:
+    log_statements:
+      - context: log
+        statements:
+          # Service Control Manager Events (Event IDs 7000-7999)
+          - set(attributes["event.description"], "Service failed to start") where attributes["event.id"] == "7000"
+          - set(attributes["event.category"], "Service Control Manager") where attributes["event.id"] == "7000"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "7000"
+
+          - set(attributes["event.description"], "Service sent start control that is not valid") where attributes["event.id"] == "7001"
+          - set(attributes["event.category"], "Service Control Manager") where attributes["event.id"] == "7001"
+
+          - set(attributes["event.description"], "Service did not respond to start or control request") where attributes["event.id"] == "7009"
+          - set(attributes["event.category"], "Service Control Manager") where attributes["event.id"] == "7009"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "7009"
+
+          - set(attributes["event.description"], "Service start timed out") where attributes["event.id"] == "7011"
+          - set(attributes["event.category"], "Service Control Manager") where attributes["event.id"] == "7011"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "7011"
+
+          - set(attributes["event.description"], "Service terminated unexpectedly") where attributes["event.id"] == "7031"
+          - set(attributes["event.category"], "Service Control Manager") where attributes["event.id"] == "7031"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "7031"
+
+          - set(attributes["event.description"], "Service started successfully") where attributes["event.id"] == "7036"
+          - set(attributes["event.category"], "Service Control Manager") where attributes["event.id"] == "7036"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "7036"
+
+          - set(attributes["event.description"], "Service entered stopped state") where attributes["event.id"] == "7040"
+          - set(attributes["event.category"], "Service Control Manager") where attributes["event.id"] == "7040"
+
+          - set(attributes["event.description"], "Service was unable to log on") where attributes["event.id"] == "7041"
+          - set(attributes["event.category"], "Service Control Manager") where attributes["event.id"] == "7041"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "7041"
+
+          - set(attributes["event.description"], "Service marked as interactive") where attributes["event.id"] == "7045"
+          - set(attributes["event.category"], "Service Control Manager") where attributes["event.id"] == "7045"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "7045"
+
+          # Kernel-General Events (Event IDs 1-99)
+          - set(attributes["event.description"], "System time changed") where attributes["event.id"] == "1"
+          - set(attributes["event.category"], "Kernel-General") where attributes["event.id"] == "1"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1"
+
+          - set(attributes["event.description"], "System uptime") where attributes["event.id"] == "6005"
+          - set(attributes["event.category"], "Event Log") where attributes["event.id"] == "6005"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "6005"
+
+          - set(attributes["event.description"], "Event log service stopped") where attributes["event.id"] == "6006"
+          - set(attributes["event.category"], "Event Log") where attributes["event.id"] == "6006"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "6006"
+
+          - set(attributes["event.description"], "System started") where attributes["event.id"] == "6009"
+          - set(attributes["event.category"], "Event Log") where attributes["event.id"] == "6009"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "6009"
+
+          - set(attributes["event.description"], "System clean shutdown") where attributes["event.id"] == "6008"
+          - set(attributes["event.category"], "Event Log") where attributes["event.id"] == "6008"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "6008"
+
+          # Kernel-Power Events (Event IDs 41-109)
+          - set(attributes["event.description"], "System rebooted without clean shutdown") where attributes["event.id"] == "41"
+          - set(attributes["event.category"], "Kernel-Power") where attributes["event.id"] == "41"
+          - set(attributes["event.severity"], "critical") where attributes["event.id"] == "41"
+
+          - set(attributes["event.description"], "System entering sleep") where attributes["event.id"] == "42"
+          - set(attributes["event.category"], "Kernel-Power") where attributes["event.id"] == "42"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "42"
+
+          - set(attributes["event.description"], "System resuming from sleep") where attributes["event.id"] == "107"
+          - set(attributes["event.category"], "Kernel-Power") where attributes["event.id"] == "107"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "107"
+
+          - set(attributes["event.description"], "System hibernate") where attributes["event.id"] == "109"
+          - set(attributes["event.category"], "Kernel-Power") where attributes["event.id"] == "109"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "109"
+
+          # Disk Events (Event IDs 7, 9, 11, 15, 51, 52, 153, 154, 157)
+          - set(attributes["event.description"], "Device has bad block") where attributes["event.id"] == "7"
+          - set(attributes["event.category"], "Disk") where attributes["event.id"] == "7"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "7"
+
+          - set(attributes["event.description"], "Device timeout") where attributes["event.id"] == "9"
+          - set(attributes["event.category"], "Disk") where attributes["event.id"] == "9"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "9"
+
+          - set(attributes["event.description"], "Driver detected controller error") where attributes["event.id"] == "11"
+          - set(attributes["event.category"], "Disk") where attributes["event.id"] == "11"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "11"
+
+          - set(attributes["event.description"], "Disk IO error") where attributes["event.id"] == "15"
+          - set(attributes["event.category"], "Disk") where attributes["event.id"] == "15"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "15"
+
+          - set(attributes["event.description"], "Disk error during paging operation") where attributes["event.id"] == "51"
+          - set(attributes["event.category"], "Disk") where attributes["event.id"] == "51"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "51"
+
+          - set(attributes["event.description"], "Disk structure corruption detected") where attributes["event.id"] == "52"
+          - set(attributes["event.category"], "Disk") where attributes["event.id"] == "52"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "52"
+
+          - set(attributes["event.description"], "IO operation retry succeeded") where attributes["event.id"] == "153"
+          - set(attributes["event.category"], "Disk") where attributes["event.id"] == "153"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "153"
+
+          - set(attributes["event.description"], "Disk allocation error") where attributes["event.id"] == "154"
+          - set(attributes["event.category"], "Disk") where attributes["event.id"] == "154"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "154"
+
+          - set(attributes["event.description"], "Disk snapshot failed") where attributes["event.id"] == "157"
+          - set(attributes["event.category"], "Disk") where attributes["event.id"] == "157"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "157"
+
+          # PlugPlayManager/DeviceManagement Events (Event IDs 20, 219, 225)
+          - set(attributes["event.description"], "Device driver installation started") where attributes["event.id"] == "20"
+          - set(attributes["event.category"], "Plug and Play") where attributes["event.id"] == "20"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "20"
+
+          - set(attributes["event.description"], "Device driver failed to load") where attributes["event.id"] == "219"
+          - set(attributes["event.category"], "Plug and Play") where attributes["event.id"] == "219"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "219"
+
+          - set(attributes["event.description"], "Kernel PnP device enumeration") where attributes["event.id"] == "225"
+          - set(attributes["event.category"], "Plug and Play") where attributes["event.id"] == "225"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "225"
+
+          # Ntfs Events (Event IDs 55, 130, 131, 137)
+          - set(attributes["event.description"], "NTFS file system corruption") where attributes["event.id"] == "55"
+          - set(attributes["event.category"], "NTFS") where attributes["event.id"] == "55"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "55"
+
+          - set(attributes["event.description"], "NTFS reset log file") where attributes["event.id"] == "130"
+          - set(attributes["event.category"], "NTFS") where attributes["event.id"] == "130"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "130"
+
+          - set(attributes["event.description"], "NTFS could not write USN record") where attributes["event.id"] == "131"
+          - set(attributes["event.category"], "NTFS") where attributes["event.id"] == "131"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "131"
+
+          - set(attributes["event.description"], "NTFS verified volume corruption") where attributes["event.id"] == "137"
+          - set(attributes["event.category"], "NTFS") where attributes["event.id"] == "137"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "137"
+
+          # Microsoft-Windows-DistributedCOM Events (Event IDs 10000-10100)
+          - set(attributes["event.description"], "DCOM server launch failed") where attributes["event.id"] == "10000"
+          - set(attributes["event.category"], "DCOM") where attributes["event.id"] == "10000"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "10000"
+
+          - set(attributes["event.description"], "DCOM server did not register") where attributes["event.id"] == "10005"
+          - set(attributes["event.category"], "DCOM") where attributes["event.id"] == "10005"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "10005"
+
+          - set(attributes["event.description"], "DCOM server access denied") where attributes["event.id"] == "10016"
+          - set(attributes["event.category"], "DCOM") where attributes["event.id"] == "10016"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "10016"
+
+          # TCPIPv6 Events (Event IDs 4201-4299)
+          - set(attributes["event.description"], "TCP/IP network interface disconnected") where attributes["event.id"] == "4201"
+          - set(attributes["event.category"], "Network") where attributes["event.id"] == "4201"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4201"
+
+          - set(attributes["event.description"], "TCP/IP duplicate IP address detected") where attributes["event.id"] == "4199"
+          - set(attributes["event.category"], "Network") where attributes["event.id"] == "4199"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "4199"
+
+          # Application Popup Events (Event ID 26, 56, etc.)
+          - set(attributes["event.description"], "Application popup displayed") where attributes["event.id"] == "26"
+          - set(attributes["event.category"], "Application Popup") where attributes["event.id"] == "26"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "26"
+
+          - set(attributes["event.description"], "Application failed initialization") where attributes["event.id"] == "56"
+          - set(attributes["event.category"], "Application Popup") where attributes["event.id"] == "56"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "56"
+
+          # Volmgr Events (Event IDs 45-49)
+          - set(attributes["event.description"], "Volume manager failed to initialize dump file") where attributes["event.id"] == "45"
+          - set(attributes["event.category"], "Volume Manager") where attributes["event.id"] == "45"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "45"
+
+          - set(attributes["event.description"], "Crash dump initialization failed") where attributes["event.id"] == "46"
+          - set(attributes["event.category"], "Volume Manager") where attributes["event.id"] == "46"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "46"
+
+          # Windows Update Events (Event IDs 19, 20, 21, 22)
+          - set(attributes["event.description"], "Windows Update installation started") where attributes["event.id"] == "19"
+          - set(attributes["event.category"], "Windows Update") where attributes["event.id"] == "19"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "19"
+
+          - set(attributes["event.description"], "Windows Update installation succeeded") where attributes["event.id"] == "20"
+          - set(attributes["event.category"], "Windows Update") where attributes["event.id"] == "20"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "20"
+
+          - set(attributes["event.description"], "Windows Update installation failed") where attributes["event.id"] == "21"
+          - set(attributes["event.category"], "Windows Update") where attributes["event.id"] == "21"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "21"
+
+          - set(attributes["event.description"], "Windows Update restart required") where attributes["event.id"] == "22"
+          - set(attributes["event.category"], "Windows Update") where attributes["event.id"] == "22"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "22"
+
+          # Default for unknown events
+          - set(attributes["event.description"], "Unknown System event") where attributes["event.description"] == nil
+          - set(attributes["event.category"], "System") where attributes["event.category"] == nil
+
+  # Parse EventData fields
+  transform/system_eventdata_fields:
+    log_statements:
+      - context: log
+        statements:
+          # For Service Control Manager events, extract service name
+          - set(attributes["service.name"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "param1"
+          - set(attributes["service.name"], body["Event"]["EventData"]["Data"][0]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][0]["@Name"] == "param1"
+
+          # Extract error codes
+          - set(attributes["error.code"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "ErrorCode"
+          - set(attributes["error.code"], body["Event"]["EventData"]["Data"][1]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][1]["@Name"] == "ErrorCode"
+
+          # Extract driver/device names
+          - set(attributes["device.name"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "DeviceName"
+          - set(attributes["device.name"], body["Event"]["EventData"]["Data"][0]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][0]["@Name"] == "DeviceName"
+
+  # Map to Splunk CIM fields
+  transform/system_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Microsoft Windows")
+          - set(attributes["vendor"], "Microsoft")
+          - set(attributes["product"], "Windows")
+
+          # CIM Destination (local host)
+          - set(attributes["dest"], attributes["host.name"]) where attributes["host.name"] != nil
+          - set(attributes["dest_host"], attributes["host.name"]) where attributes["host.name"] != nil
+
+          # CIM Signature
+          - set(attributes["signature"], attributes["event.description"]) where attributes["event.description"] != nil
+          - set(attributes["signature_id"], attributes["event.id"]) where attributes["event.id"] != nil
+
+          # CIM Action based on event category
+          - set(attributes["action"], "failure") where attributes["event.severity"] == "error"
+          - set(attributes["action"], "success") where attributes["event.severity"] == "info" and attributes["event.category"] == "Service Control Manager"
+          - set(attributes["action"], "started") where attributes["event.id"] == "7036" or attributes["event.id"] == "6009" or attributes["event.id"] == "6005"
+          - set(attributes["action"], "stopped") where attributes["event.id"] == "6006" or attributes["event.id"] == "7040"
+
+          # CIM Result
+          - set(attributes["result"], "failure") where attributes["event.severity"] == "error" or attributes["event.severity"] == "critical"
+          - set(attributes["result"], "success") where attributes["event.severity"] == "info"
+
+          # CIM Tag
+          - set(attributes["tag"], "service") where attributes["event.category"] == "Service Control Manager"
+          - set(attributes["tag"], "performance") where attributes["event.category"] == "Disk" or attributes["event.category"] == "Network"
+          - set(attributes["tag"], "power") where attributes["event.category"] == "Kernel-Power"
+          - set(attributes["tag"], "update") where attributes["event.category"] == "Windows Update"
+
+          # CIM Object/Service
+          - set(attributes["object"], attributes["service.name"]) where attributes["service.name"] != nil
+          - set(attributes["object_category"], "service") where attributes["service.name"] != nil
+
+          # CIM App
+          - set(attributes["app"], attributes["event.provider"]) where attributes["event.provider"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/system_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Microsoft")
+          - set(attributes["metadata.product_name"], "Windows")
+          - set(attributes["metadata.log_type"], "WINEVTLOG")
+
+          # Map event categories to UDM event types
+          - set(attributes["metadata.event_type"], "SERVICE_MODIFICATION") where attributes["event.category"] == "Service Control Manager"
+          - set(attributes["metadata.event_type"], "SYSTEM_AUDIT_LOG_UNCATEGORIZED") where attributes["event.category"] == "Kernel-Power" or attributes["event.category"] == "Kernel-General"
+          - set(attributes["metadata.event_type"], "RESOURCE_DELETION") where attributes["event.category"] == "Disk" and attributes["event.severity"] == "error"
+          - set(attributes["metadata.event_type"], "NETWORK_CONNECTION") where attributes["event.category"] == "Network"
+          - set(attributes["metadata.event_type"], "SOFTWARE_INSTALLED") where attributes["event.category"] == "Windows Update" and attributes["event.id"] == "20"
+          - set(attributes["metadata.event_type"], "GENERIC_EVENT") where attributes["metadata.event_type"] == nil
+
+          # UDM Principal (local system)
+          - set(attributes["principal.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+
+          # UDM Target (services, devices)
+          - set(attributes["target.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          - set(attributes["target.resource.name"], attributes["service.name"]) where attributes["service.name"] != nil
+          - set(attributes["target.resource.name"], attributes["device.name"]) where attributes["device.name"] != nil
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "BLOCK") where attributes["event.severity"] == "error" or attributes["event.severity"] == "critical"
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.severity"] == "info"
+          - set(attributes["security_result.severity"], "LOW") where attributes["event.severity"] == "info"
+          - set(attributes["security_result.severity"], "MEDIUM") where attributes["event.severity"] == "warning"
+          - set(attributes["security_result.severity"], "HIGH") where attributes["event.severity"] == "error"
+          - set(attributes["security_result.severity"], "CRITICAL") where attributes["event.severity"] == "critical"
+          - set(attributes["security_result.summary"], attributes["event.description"]) where attributes["event.description"] != nil
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to file
+  # file:
+  #   path: ./system-events.json
+
+service:
+  pipelines:
+    logs:
+      receivers: [windowseventlog/system]
+      processors:
+        - transform/system_eventdata
+        - transform/system_event_descriptions
+        - transform/system_eventdata_fields
+        - transform/system_cim
+        - transform/system_udm
+      exporters: [logging]

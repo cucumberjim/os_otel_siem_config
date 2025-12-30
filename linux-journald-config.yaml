@@ -1,0 +1,248 @@
+# OpenTelemetry Collector Configuration for Linux Journald Logs (Rocky 9)
+# This configuration ingests journald logs and transforms them with Splunk CIM and Google SecOps UDM compliant field names
+
+receivers:
+  journald:
+    directory: /var/log/journal
+    units:
+      - sshd
+      - systemd
+      - sudo
+      - su
+      - cron
+      - auditd
+      - firewalld
+      - NetworkManager
+      - kernel
+    priority: info
+
+processors:
+  # Extract and standardize journald fields
+  transform/journald_extract:
+    log_statements:
+      - context: log
+        statements:
+          # Set source metadata
+          - set(attributes["log.source"], "linux.journald")
+          - set(attributes["log.source.type"], "journald")
+
+          # Extract standard journald fields
+          - set(attributes["journal.unit"], attributes["_SYSTEMD_UNIT"]) where attributes["_SYSTEMD_UNIT"] != nil
+          - set(attributes["journal.priority"], attributes["PRIORITY"]) where attributes["PRIORITY"] != nil
+          - set(attributes["journal.syslog_facility"], attributes["SYSLOG_FACILITY"]) where attributes["SYSLOG_FACILITY"] != nil
+          - set(attributes["journal.syslog_identifier"], attributes["SYSLOG_IDENTIFIER"]) where attributes["SYSLOG_IDENTIFIER"] != nil
+
+          # Extract process information
+          - set(attributes["journal.pid"], attributes["_PID"]) where attributes["_PID"] != nil
+          - set(attributes["journal.uid"], attributes["_UID"]) where attributes["_UID"] != nil
+          - set(attributes["journal.gid"], attributes["_GID"]) where attributes["_GID"] != nil
+          - set(attributes["journal.comm"], attributes["_COMM"]) where attributes["_COMM"] != nil
+          - set(attributes["journal.exe"], attributes["_EXE"]) where attributes["_EXE"] != nil
+          - set(attributes["journal.cmdline"], attributes["_CMDLINE"]) where attributes["_CMDLINE"] != nil
+
+          # Extract system information
+          - set(attributes["journal.hostname"], attributes["_HOSTNAME"]) where attributes["_HOSTNAME"] != nil
+          - set(attributes["journal.boot_id"], attributes["_BOOT_ID"]) where attributes["_BOOT_ID"] != nil
+          - set(attributes["journal.machine_id"], attributes["_MACHINE_ID"]) where attributes["_MACHINE_ID"] != nil
+
+          # Extract message
+          - set(attributes["journal.message"], body) where body != nil
+
+          # Map priority to severity
+          - set(attributes["severity"], "emergency") where attributes["PRIORITY"] == "0"
+          - set(attributes["severity"], "alert") where attributes["PRIORITY"] == "1"
+          - set(attributes["severity"], "critical") where attributes["PRIORITY"] == "2"
+          - set(attributes["severity"], "error") where attributes["PRIORITY"] == "3"
+          - set(attributes["severity"], "warning") where attributes["PRIORITY"] == "4"
+          - set(attributes["severity"], "notice") where attributes["PRIORITY"] == "5"
+          - set(attributes["severity"], "info") where attributes["PRIORITY"] == "6"
+          - set(attributes["severity"], "debug") where attributes["PRIORITY"] == "7"
+
+  # Identify core OS logs vs application logs
+  transform/journald_categorize:
+    log_statements:
+      - context: log
+        statements:
+          # Mark core OS services as handled
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "sshd.service"
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "systemd.service"
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "sudo.service"
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "su.service"
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "cron.service"
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "crond.service"
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "auditd.service"
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "firewalld.service"
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "NetworkManager.service"
+          - set(attributes["event.handled"], "true") where attributes["_SYSTEMD_UNIT"] == "kernel"
+          - set(attributes["event.handled"], "true") where attributes["SYSLOG_IDENTIFIER"] == "kernel"
+          - set(attributes["event.handled"], "true") where attributes["SYSLOG_IDENTIFIER"] == "sshd"
+          - set(attributes["event.handled"], "true") where attributes["SYSLOG_IDENTIFIER"] == "sudo"
+          - set(attributes["event.handled"], "true") where attributes["SYSLOG_IDENTIFIER"] == "su"
+
+          # Mark all others as unhandled (application logs)
+          - set(attributes["event.handled"], "false") where attributes["event.handled"] == nil
+          - set(attributes["event.category"], "application") where attributes["event.handled"] == "false"
+
+  # Parse SSH messages (sshd)
+  transform/journald_sshd:
+    log_statements:
+      - context: log
+        statements:
+          # SSH Authentication events
+          - set(attributes["event.category"], "authentication") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and (IsMatch(body, "Accepted") or IsMatch(body, "Failed"))
+          - set(attributes["event.action"], "success") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and IsMatch(body, "Accepted")
+          - set(attributes["event.action"], "failure") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and IsMatch(body, "Failed")
+          - set(attributes["event.outcome"], "success") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and IsMatch(body, "Accepted")
+          - set(attributes["event.outcome"], "failure") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and IsMatch(body, "Failed")
+
+          # SSH Session events
+          - set(attributes["event.category"], "session") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and (IsMatch(body, "session opened") or IsMatch(body, "session closed"))
+          - set(attributes["event.action"], "session_opened") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and IsMatch(body, "session opened")
+          - set(attributes["event.action"], "session_closed") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and IsMatch(body, "session closed")
+
+  # Parse sudo/su messages
+  transform/journald_sudo:
+    log_statements:
+      - context: log
+        statements:
+          # Sudo command execution
+          - set(attributes["event.category"], "privilege_escalation") where attributes["SYSLOG_IDENTIFIER"] == "sudo"
+          - set(attributes["event.action"], "allowed") where attributes["SYSLOG_IDENTIFIER"] == "sudo" and IsMatch(body, "COMMAND")
+          - set(attributes["event.outcome"], "success") where attributes["SYSLOG_IDENTIFIER"] == "sudo" and IsMatch(body, "COMMAND")
+
+          # Su usage
+          - set(attributes["event.category"], "privilege_escalation") where attributes["SYSLOG_IDENTIFIER"] == "su"
+          - set(attributes["event.action"], "success") where attributes["SYSLOG_IDENTIFIER"] == "su" and IsMatch(body, "Successful")
+          - set(attributes["event.action"], "failure") where attributes["SYSLOG_IDENTIFIER"] == "su" and IsMatch(body, "FAILED")
+
+  # Parse systemd service events
+  transform/journald_systemd:
+    log_statements:
+      - context: log
+        statements:
+          # Service start/stop
+          - set(attributes["event.category"], "service") where attributes["_SYSTEMD_UNIT"] != nil and (IsMatch(body, "Started") or IsMatch(body, "Stopped") or IsMatch(body, "Starting") or IsMatch(body, "Stopping"))
+          - set(attributes["event.action"], "started") where IsMatch(body, "Started")
+          - set(attributes["event.action"], "stopped") where IsMatch(body, "Stopped")
+          - set(attributes["event.action"], "starting") where IsMatch(body, "Starting")
+          - set(attributes["event.action"], "stopping") where IsMatch(body, "Stopping")
+
+  # Map to Splunk CIM fields
+  transform/journald_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Linux Systemd")
+          - set(attributes["vendor"], "Linux")
+          - set(attributes["product"], "journald")
+
+          # CIM Destination (local host)
+          - set(attributes["dest"], attributes["_HOSTNAME"]) where attributes["_HOSTNAME"] != nil
+          - set(attributes["dest_host"], attributes["_HOSTNAME"]) where attributes["_HOSTNAME"] != nil
+
+          # CIM Process fields
+          - set(attributes["process"], attributes["_COMM"]) where attributes["_COMM"] != nil
+          - set(attributes["process_name"], attributes["_COMM"]) where attributes["_COMM"] != nil
+          - set(attributes["process_path"], attributes["_EXE"]) where attributes["_EXE"] != nil
+          - set(attributes["process_id"], attributes["_PID"]) where attributes["_PID"] != nil
+
+          # CIM User fields (for sudo/su events)
+          - set(attributes["user_id"], attributes["_UID"]) where attributes["_UID"] != nil
+
+          # CIM Signature
+          - set(attributes["signature"], "SSH Authentication") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and attributes["event.category"] == "authentication"
+          - set(attributes["signature"], "SSH Session") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and attributes["event.category"] == "session"
+          - set(attributes["signature"], "Sudo Command") where attributes["SYSLOG_IDENTIFIER"] == "sudo"
+          - set(attributes["signature"], "Su Usage") where attributes["SYSLOG_IDENTIFIER"] == "su"
+          - set(attributes["signature"], "Service Control") where attributes["event.category"] == "service"
+          - set(attributes["signature"], "Kernel Message") where attributes["SYSLOG_IDENTIFIER"] == "kernel"
+          - set(attributes["signature"], "Firewall Event") where attributes["_SYSTEMD_UNIT"] == "firewalld.service"
+          - set(attributes["signature"], "Network Event") where attributes["_SYSTEMD_UNIT"] == "NetworkManager.service"
+
+          # CIM Action
+          - set(attributes["action"], attributes["event.action"]) where attributes["event.action"] != nil
+
+          # CIM Result
+          - set(attributes["result"], attributes["event.outcome"]) where attributes["event.outcome"] != nil
+
+          # CIM Tag
+          - set(attributes["tag"], "authentication") where attributes["event.category"] == "authentication"
+          - set(attributes["tag"], "privileged") where attributes["event.category"] == "privilege_escalation"
+          - set(attributes["tag"], "service") where attributes["event.category"] == "service"
+
+          # CIM App
+          - set(attributes["app"], attributes["SYSLOG_IDENTIFIER"]) where attributes["SYSLOG_IDENTIFIER"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/journald_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Linux")
+          - set(attributes["metadata.product_name"], "systemd-journald")
+          - set(attributes["metadata.log_type"], "SYSLOG")
+
+          # Map categories to UDM event types
+          - set(attributes["metadata.event_type"], "USER_LOGIN") where attributes["event.category"] == "authentication" and attributes["event.outcome"] == "success"
+          - set(attributes["metadata.event_type"], "USER_LOGIN") where attributes["SYSLOG_IDENTIFIER"] == "sshd" and IsMatch(body, "Accepted")
+          - set(attributes["metadata.event_type"], "PROCESS_LAUNCH") where attributes["event.category"] == "privilege_escalation"
+          - set(attributes["metadata.event_type"], "SERVICE_MODIFICATION") where attributes["event.category"] == "service"
+          - set(attributes["metadata.event_type"], "SYSTEM_AUDIT_LOG_UNCATEGORIZED") where attributes["metadata.event_type"] == nil and attributes["event.handled"] == "true"
+          - set(attributes["metadata.event_type"], "GENERIC_EVENT") where attributes["event.handled"] == "false"
+
+          # UDM Principal (source of action)
+          - set(attributes["principal.hostname"], attributes["_HOSTNAME"]) where attributes["_HOSTNAME"] != nil
+          - set(attributes["principal.process.pid"], attributes["_PID"]) where attributes["_PID"] != nil
+          - set(attributes["principal.process.command_line"], attributes["_CMDLINE"]) where attributes["_CMDLINE"] != nil
+          - set(attributes["principal.process.file.full_path"], attributes["_EXE"]) where attributes["_EXE"] != nil
+          - set(attributes["principal.user.userid"], attributes["_UID"]) where attributes["_UID"] != nil
+
+          # UDM Target (object of action - typically localhost)
+          - set(attributes["target.hostname"], attributes["_HOSTNAME"]) where attributes["_HOSTNAME"] != nil
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.outcome"] == "success"
+          - set(attributes["security_result.action"], "BLOCK") where attributes["event.outcome"] == "failure"
+          - set(attributes["security_result.severity"], "LOW") where attributes["PRIORITY"] == "6" or attributes["PRIORITY"] == "7"
+          - set(attributes["security_result.severity"], "MEDIUM") where attributes["PRIORITY"] == "4" or attributes["PRIORITY"] == "5"
+          - set(attributes["security_result.severity"], "HIGH") where attributes["PRIORITY"] == "2" or attributes["PRIORITY"] == "3"
+          - set(attributes["security_result.severity"], "CRITICAL") where attributes["PRIORITY"] == "0" or attributes["PRIORITY"] == "1"
+          - set(attributes["security_result.summary"], attributes["SYSLOG_IDENTIFIER"]) where attributes["SYSLOG_IDENTIFIER"] != nil
+
+          # UDM Network (for SSH events)
+          - set(attributes["network.application_protocol"], "SSH") where attributes["SYSLOG_IDENTIFIER"] == "sshd"
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to Splunk HEC
+  # splunk_hec:
+  #   token: "your-hec-token"
+  #   endpoint: "https://splunk:8088/services/collector"
+  #   source: "journald"
+  #   sourcetype: "linux:journald"
+  #   index: "linux"
+
+service:
+  pipelines:
+    logs:
+      receivers: [journald]
+      processors:
+        - transform/journald_extract
+        - transform/journald_categorize
+        - transform/journald_sshd
+        - transform/journald_sudo
+        - transform/journald_systemd
+        - transform/journald_cim
+        - transform/journald_udm
+      exporters: [logging]

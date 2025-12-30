@@ -1,0 +1,328 @@
+# OpenTelemetry Collector Configuration for Windows Task Scheduler Event Log
+# This configuration ingests Task Scheduler operational logs and transforms them to human-readable format
+
+receivers:
+  windowseventlog/taskscheduler:
+    channel: Microsoft-Windows-TaskScheduler/Operational
+    max_reads: 100
+    start_at: end
+    poll_interval: 1s
+    attributes:
+      log.source: "windows.taskscheduler"
+    raw: true  # Get raw XML for full parsing
+
+processors:
+  # Extract and parse EventData XML fields
+  transform/taskscheduler_eventdata:
+    log_statements:
+      - context: log
+        statements:
+          # Extract event record ID
+          - set(attributes["event.record_id"], body["Event"]["System"]["EventRecordID"]) where body["Event"]["System"]["EventRecordID"] != nil
+
+          # Extract provider name
+          - set(attributes["event.provider"], body["Event"]["System"]["Provider"]["@Name"]) where body["Event"]["System"]["Provider"]["@Name"] != nil
+
+          # Extract event ID
+          - set(attributes["event.id"], body["Event"]["System"]["EventID"]) where body["Event"]["System"]["EventID"] != nil
+
+          # Extract event level
+          - set(attributes["event.level"], body["Event"]["System"]["Level"]) where body["Event"]["System"]["Level"] != nil
+
+          # Extract computer name
+          - set(attributes["host.name"], body["Event"]["System"]["Computer"]) where body["Event"]["System"]["Computer"] != nil
+
+          # Extract user SID
+          - set(attributes["user.sid"], body["Event"]["System"]["Security"]["@UserID"]) where body["Event"]["System"]["Security"]["@UserID"] != nil
+
+          # Extract time created
+          - set(attributes["event.created"], body["Event"]["System"]["TimeCreated"]["@SystemTime"]) where body["Event"]["System"]["TimeCreated"]["@SystemTime"] != nil
+
+          # Extract process ID
+          - set(attributes["process.pid"], body["Event"]["System"]["Execution"]["@ProcessID"]) where body["Event"]["System"]["Execution"]["@ProcessID"] != nil
+
+  # Transform Event IDs to human-readable descriptions
+  transform/taskscheduler_event_descriptions:
+    log_statements:
+      - context: log
+        statements:
+          # Task Registration Events (100-103)
+          - set(attributes["event.description"], "Task registered") where attributes["event.id"] == "100"
+          - set(attributes["event.category"], "Task Registration") where attributes["event.id"] == "100"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "100"
+          - set(attributes["event.action"], "task_registered") where attributes["event.id"] == "100"
+
+          - set(attributes["event.description"], "Task registration updated") where attributes["event.id"] == "101"
+          - set(attributes["event.category"], "Task Registration") where attributes["event.id"] == "101"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "101"
+          - set(attributes["event.action"], "task_updated") where attributes["event.id"] == "101"
+
+          - set(attributes["event.description"], "Task registration failed") where attributes["event.id"] == "102"
+          - set(attributes["event.category"], "Task Registration") where attributes["event.id"] == "102"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "102"
+          - set(attributes["event.action"], "task_registration_failed") where attributes["event.id"] == "102"
+
+          - set(attributes["event.description"], "Task deleted") where attributes["event.id"] == "141"
+          - set(attributes["event.category"], "Task Registration") where attributes["event.id"] == "141"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "141"
+          - set(attributes["event.action"], "task_deleted") where attributes["event.id"] == "141"
+
+          # Task Execution Events (106-111, 200-203)
+          - set(attributes["event.description"], "Task started") where attributes["event.id"] == "100"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "100"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "100"
+          - set(attributes["event.action"], "task_started") where attributes["event.id"] == "100"
+
+          - set(attributes["event.description"], "Task triggered by user") where attributes["event.id"] == "107"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "107"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "107"
+          - set(attributes["event.action"], "task_triggered_user") where attributes["event.id"] == "107"
+
+          - set(attributes["event.description"], "Task triggered by event") where attributes["event.id"] == "108"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "108"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "108"
+          - set(attributes["event.action"], "task_triggered_event") where attributes["event.id"] == "108"
+
+          - set(attributes["event.description"], "Task triggered by computer startup") where attributes["event.id"] == "109"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "109"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "109"
+          - set(attributes["event.action"], "task_triggered_startup") where attributes["event.id"] == "109"
+
+          - set(attributes["event.description"], "Task triggered by logon") where attributes["event.id"] == "110"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "110"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "110"
+          - set(attributes["event.action"], "task_triggered_logon") where attributes["event.id"] == "110"
+
+          - set(attributes["event.description"], "Task triggered by console connect") where attributes["event.id"] == "111"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "111"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "111"
+          - set(attributes["event.action"], "task_triggered_console") where attributes["event.id"] == "111"
+
+          - set(attributes["event.description"], "Action started") where attributes["event.id"] == "200"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "200"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "200"
+          - set(attributes["event.action"], "action_started") where attributes["event.id"] == "200"
+
+          - set(attributes["event.description"], "Action completed") where attributes["event.id"] == "201"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "201"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "201"
+          - set(attributes["event.action"], "action_completed") where attributes["event.id"] == "201"
+
+          - set(attributes["event.description"], "Action failed to start") where attributes["event.id"] == "202"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "202"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "202"
+          - set(attributes["event.action"], "action_failed_start") where attributes["event.id"] == "202"
+
+          - set(attributes["event.description"], "Action failed with error") where attributes["event.id"] == "203"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "203"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "203"
+          - set(attributes["event.action"], "action_failed") where attributes["event.id"] == "203"
+
+          # Task Completion Events (102, 201, 325, 331)
+          - set(attributes["event.description"], "Task completed successfully") where attributes["event.id"] == "102"
+          - set(attributes["event.category"], "Task Completion") where attributes["event.id"] == "102"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "102"
+          - set(attributes["event.action"], "task_completed") where attributes["event.id"] == "102"
+
+          - set(attributes["event.description"], "Task completed with exit code") where attributes["event.id"] == "201"
+          - set(attributes["event.category"], "Task Completion") where attributes["event.id"] == "201"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "201"
+          - set(attributes["event.action"], "task_completed_with_code") where attributes["event.id"] == "201"
+
+          - set(attributes["event.description"], "Task launch request ignored, instance already running") where attributes["event.id"] == "322"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "322"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "322"
+          - set(attributes["event.action"], "task_already_running") where attributes["event.id"] == "322"
+
+          - set(attributes["event.description"], "Task process started") where attributes["event.id"] == "129"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "129"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "129"
+          - set(attributes["event.action"], "task_process_started") where attributes["event.id"] == "129"
+
+          # Task Engine Events (103-106, 140, 142)
+          - set(attributes["event.description"], "Task Scheduler started instance") where attributes["event.id"] == "119"
+          - set(attributes["event.category"], "Task Engine") where attributes["event.id"] == "119"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "119"
+
+          - set(attributes["event.description"], "Task Scheduler launched instance") where attributes["event.id"] == "129"
+          - set(attributes["event.category"], "Task Engine") where attributes["event.id"] == "129"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "129"
+
+          - set(attributes["event.description"], "Task Scheduler failed to start instance") where attributes["event.id"] == "103"
+          - set(attributes["event.category"], "Task Engine") where attributes["event.id"] == "103"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "103"
+
+          - set(attributes["event.description"], "Task Scheduler could not launch task") where attributes["event.id"] == "104"
+          - set(attributes["event.category"], "Task Engine") where attributes["event.id"] == "104"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "104"
+
+          - set(attributes["event.description"], "Task Scheduler terminating all instances") where attributes["event.id"] == "140"
+          - set(attributes["event.category"], "Task Engine") where attributes["event.id"] == "140"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "140"
+
+          - set(attributes["event.description"], "Task Scheduler removed task") where attributes["event.id"] == "142"
+          - set(attributes["event.category"], "Task Engine") where attributes["event.id"] == "142"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "142"
+
+          # Task Enablement/Disablement (105, 106)
+          - set(attributes["event.description"], "Task disabled") where attributes["event.id"] == "105"
+          - set(attributes["event.category"], "Task Configuration") where attributes["event.id"] == "105"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "105"
+          - set(attributes["event.action"], "task_disabled") where attributes["event.id"] == "105"
+
+          - set(attributes["event.description"], "Task enabled") where attributes["event.id"] == "106"
+          - set(attributes["event.category"], "Task Configuration") where attributes["event.id"] == "106"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "106"
+          - set(attributes["event.action"], "task_enabled") where attributes["event.id"] == "106"
+
+          # Task Trigger Events (117-119, 312-314)
+          - set(attributes["event.description"], "Task triggered by schedule") where attributes["event.id"] == "117"
+          - set(attributes["event.category"], "Task Trigger") where attributes["event.id"] == "117"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "117"
+          - set(attributes["event.action"], "task_triggered_schedule") where attributes["event.id"] == "117"
+
+          - set(attributes["event.description"], "Task triggered by registration") where attributes["event.id"] == "118"
+          - set(attributes["event.category"], "Task Trigger") where attributes["event.id"] == "118"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "118"
+          - set(attributes["event.action"], "task_triggered_registration") where attributes["event.id"] == "118"
+
+          - set(attributes["event.description"], "Task triggered on idle") where attributes["event.id"] == "119"
+          - set(attributes["event.category"], "Task Trigger") where attributes["event.id"] == "119"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "119"
+          - set(attributes["event.action"], "task_triggered_idle") where attributes["event.id"] == "119"
+
+          # Task Missed Events (131, 142, 153)
+          - set(attributes["event.description"], "Task missed start time") where attributes["event.id"] == "131"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "131"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "131"
+          - set(attributes["event.action"], "task_missed") where attributes["event.id"] == "131"
+
+          - set(attributes["event.description"], "Task removed from scheduler") where attributes["event.id"] == "142"
+          - set(attributes["event.category"], "Task Configuration") where attributes["event.id"] == "142"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "142"
+
+          # Service Events (325-328)
+          - set(attributes["event.description"], "Task Scheduler service started") where attributes["event.id"] == "325"
+          - set(attributes["event.category"], "Service") where attributes["event.id"] == "325"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "325"
+
+          - set(attributes["event.description"], "Task Scheduler service stopped") where attributes["event.id"] == "326"
+          - set(attributes["event.category"], "Service") where attributes["event.id"] == "326"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "326"
+
+          - set(attributes["event.description"], "Task Scheduler service cannot start") where attributes["event.id"] == "327"
+          - set(attributes["event.category"], "Service") where attributes["event.id"] == "327"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "327"
+
+          # Task History Events (110-111, 140-142)
+          - set(attributes["event.description"], "Task history was cleared") where attributes["event.id"] == "141"
+          - set(attributes["event.category"], "Task History") where attributes["event.id"] == "141"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "141"
+
+          # Task Termination Events (152, 153)
+          - set(attributes["event.description"], "Task stopping due to user request") where attributes["event.id"] == "152"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "152"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "152"
+          - set(attributes["event.action"], "task_stopped_user") where attributes["event.id"] == "152"
+
+          - set(attributes["event.description"], "Task stopping due to timeout") where attributes["event.id"] == "153"
+          - set(attributes["event.category"], "Task Execution") where attributes["event.id"] == "153"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "153"
+          - set(attributes["event.action"], "task_stopped_timeout") where attributes["event.id"] == "153"
+
+          # Default for unknown events
+          - set(attributes["event.description"], "Task Scheduler event") where attributes["event.description"] == nil
+          - set(attributes["event.category"], "Task Scheduler") where attributes["event.category"] == nil
+
+  # Parse EventData fields
+  transform/taskscheduler_eventdata_fields:
+    log_statements:
+      - context: log
+        statements:
+          # Extract task name
+          - set(attributes["task.name"], body["Event"]["EventData"]["TaskName"]) where body["Event"]["EventData"]["TaskName"] != nil
+
+          # Extract task path
+          - set(attributes["task.path"], body["Event"]["EventData"]["Path"]) where body["Event"]["EventData"]["Path"] != nil
+
+          # Extract user context
+          - set(attributes["task.user"], body["Event"]["EventData"]["UserContext"]) where body["Event"]["EventData"]["UserContext"] != nil
+          - set(attributes["task.user"], body["Event"]["EventData"]["UserName"]) where body["Event"]["EventData"]["UserName"] != nil
+
+          # Extract action name and command
+          - set(attributes["task.action_name"], body["Event"]["EventData"]["ActionName"]) where body["Event"]["EventData"]["ActionName"] != nil
+          - set(attributes["task.action_command"], body["Event"]["EventData"]["Command"]) where body["Event"]["EventData"]["Command"] != nil
+
+          # Extract result/exit code
+          - set(attributes["task.result_code"], body["Event"]["EventData"]["ResultCode"]) where body["Event"]["EventData"]["ResultCode"] != nil
+          - set(attributes["task.exit_code"], body["Event"]["EventData"]["ExitCode"]) where body["Event"]["EventData"]["ExitCode"] != nil
+
+          # Extract instance ID and process ID
+          - set(attributes["task.instance_id"], body["Event"]["EventData"]["InstanceId"]) where body["Event"]["EventData"]["InstanceId"] != nil
+          - set(attributes["task.process_id"], body["Event"]["EventData"]["ProcessID"]) where body["Event"]["EventData"]["ProcessID"] != nil
+
+          # Extract engine PID
+          - set(attributes["task.engine_pid"], body["Event"]["EventData"]["EnginePID"]) where body["Event"]["EventData"]["EnginePID"] != nil
+
+  # Map to Splunk CIM fields
+  transform/taskscheduler_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Microsoft Windows")
+          - set(attributes["vendor"], "Microsoft")
+          - set(attributes["product"], "Windows")
+          # CIM Destination
+          - set(attributes["dest"], attributes["host.name"]) where attributes["host.name"] != nil
+          # CIM Signature
+          - set(attributes["signature"], attributes["event.description"]) where attributes["event.description"] != nil
+          - set(attributes["signature_id"], attributes["event.id"]) where attributes["event.id"] != nil
+          # CIM Action
+          - set(attributes["action"], attributes["event.action"]) where attributes["event.action"] != nil
+          # CIM App
+          - set(attributes["app"], attributes["event.provider"]) where attributes["event.provider"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/taskscheduler_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Microsoft")
+          - set(attributes["metadata.product_name"], "Windows")
+          - set(attributes["metadata.log_type"], "WINEVTLOG")
+          # UDM Principal
+          - set(attributes["principal.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Target
+          - set(attributes["target.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Security Result
+          - set(attributes["security_result.summary"], attributes["event.description"]) where attributes["event.description"] != nil
+
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to file
+  # file:
+  #   path: ./taskscheduler-events.json
+
+service:
+  pipelines:
+    logs:
+      receivers: [windowseventlog/taskscheduler]
+      processors:
+        - transform/taskscheduler_eventdata
+        - transform/taskscheduler_event_descriptions
+        - transform/taskscheduler_eventdata_fields
+        - transform/taskscheduler_cim
+        - transform/taskscheduler_udm
+      exporters: [logging]

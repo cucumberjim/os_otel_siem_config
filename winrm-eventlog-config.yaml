@@ -1,0 +1,336 @@
+# OpenTelemetry Collector Configuration for Windows WinRM Event Log
+# This configuration ingests WinRM operational logs and transforms them to human-readable format
+
+receivers:
+  windowseventlog/winrm:
+    channel: Microsoft-Windows-WinRM/Operational
+    max_reads: 100
+    start_at: end
+    poll_interval: 1s
+    attributes:
+      log.source: "windows.winrm"
+    raw: true  # Get raw XML for full parsing
+
+processors:
+  # Extract and parse EventData XML fields
+  transform/winrm_eventdata:
+    log_statements:
+      - context: log
+        statements:
+          # Extract event record ID
+          - set(attributes["event.record_id"], body["Event"]["System"]["EventRecordID"]) where body["Event"]["System"]["EventRecordID"] != nil
+
+          # Extract provider name
+          - set(attributes["event.provider"], body["Event"]["System"]["Provider"]["@Name"]) where body["Event"]["System"]["Provider"]["@Name"] != nil
+
+          # Extract event ID
+          - set(attributes["event.id"], body["Event"]["System"]["EventID"]) where body["Event"]["System"]["EventID"] != nil
+
+          # Extract event level
+          - set(attributes["event.level"], body["Event"]["System"]["Level"]) where body["Event"]["System"]["Level"] != nil
+
+          # Extract computer name
+          - set(attributes["host.name"], body["Event"]["System"]["Computer"]) where body["Event"]["System"]["Computer"] != nil
+
+          # Extract user SID
+          - set(attributes["user.sid"], body["Event"]["System"]["Security"]["@UserID"]) where body["Event"]["System"]["Security"]["@UserID"] != nil
+
+          # Extract time created
+          - set(attributes["event.created"], body["Event"]["System"]["TimeCreated"]["@SystemTime"]) where body["Event"]["System"]["TimeCreated"]["@SystemTime"] != nil
+
+          # Extract process ID
+          - set(attributes["process.pid"], body["Event"]["System"]["Execution"]["@ProcessID"]) where body["Event"]["System"]["Execution"]["@ProcessID"] != nil
+
+  # Transform Event IDs to human-readable descriptions
+  transform/winrm_event_descriptions:
+    log_statements:
+      - context: log
+        statements:
+          # WinRM Service Events (Event IDs 1-20)
+          - set(attributes["event.description"], "WinRM service started") where attributes["event.id"] == "1"
+          - set(attributes["event.category"], "WinRM Service") where attributes["event.id"] == "1"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1"
+          - set(attributes["event.action"], "service_started") where attributes["event.id"] == "1"
+
+          - set(attributes["event.description"], "WinRM service stopped") where attributes["event.id"] == "2"
+          - set(attributes["event.category"], "WinRM Service") where attributes["event.id"] == "2"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "2"
+          - set(attributes["event.action"], "service_stopped") where attributes["event.id"] == "2"
+
+          - set(attributes["event.description"], "WinRM service configured") where attributes["event.id"] == "3"
+          - set(attributes["event.category"], "WinRM Service") where attributes["event.id"] == "3"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "3"
+
+          - set(attributes["event.description"], "WinRM configuration change") where attributes["event.id"] == "4"
+          - set(attributes["event.category"], "WinRM Service") where attributes["event.id"] == "4"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4"
+
+          # WinRM Connection Events (Event IDs 30-80)
+          - set(attributes["event.description"], "WinRM creating WSMan shell") where attributes["event.id"] == "30"
+          - set(attributes["event.category"], "WinRM Connection") where attributes["event.id"] == "30"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "30"
+          - set(attributes["event.action"], "shell_creating") where attributes["event.id"] == "30"
+
+          - set(attributes["event.description"], "WinRM created WSMan shell") where attributes["event.id"] == "31"
+          - set(attributes["event.category"], "WinRM Connection") where attributes["event.id"] == "31"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "31"
+          - set(attributes["event.action"], "shell_created") where attributes["event.id"] == "31"
+
+          - set(attributes["event.description"], "WinRM closing WSMan shell") where attributes["event.id"] == "32"
+          - set(attributes["event.category"], "WinRM Connection") where attributes["event.id"] == "32"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "32"
+          - set(attributes["event.action"], "shell_closing") where attributes["event.id"] == "32"
+
+          - set(attributes["event.description"], "WinRM closed WSMan shell") where attributes["event.id"] == "33"
+          - set(attributes["event.category"], "WinRM Connection") where attributes["event.id"] == "33"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "33"
+          - set(attributes["event.action"], "shell_closed") where attributes["event.id"] == "33"
+
+          - set(attributes["event.description"], "WinRM command executed") where attributes["event.id"] == "40"
+          - set(attributes["event.category"], "WinRM Execution") where attributes["event.id"] == "40"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "40"
+          - set(attributes["event.action"], "command_executed") where attributes["event.id"] == "40"
+
+          - set(attributes["event.description"], "WinRM command completed") where attributes["event.id"] == "41"
+          - set(attributes["event.category"], "WinRM Execution") where attributes["event.id"] == "41"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "41"
+          - set(attributes["event.action"], "command_completed") where attributes["event.id"] == "41"
+
+          # WinRM Authentication Events (Event IDs 81-100)
+          - set(attributes["event.description"], "WinRM authentication started") where attributes["event.id"] == "80"
+          - set(attributes["event.category"], "WinRM Authentication") where attributes["event.id"] == "80"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "80"
+          - set(attributes["event.action"], "auth_started") where attributes["event.id"] == "80"
+
+          - set(attributes["event.description"], "WinRM authentication succeeded") where attributes["event.id"] == "81"
+          - set(attributes["event.category"], "WinRM Authentication") where attributes["event.id"] == "81"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "81"
+          - set(attributes["event.action"], "auth_success") where attributes["event.id"] == "81"
+
+          - set(attributes["event.description"], "WinRM authentication failed") where attributes["event.id"] == "82"
+          - set(attributes["event.category"], "WinRM Authentication") where attributes["event.id"] == "82"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "82"
+          - set(attributes["event.action"], "auth_failed") where attributes["event.id"] == "82"
+
+          - set(attributes["event.description"], "WinRM user authenticated") where attributes["event.id"] == "91"
+          - set(attributes["event.category"], "WinRM Authentication") where attributes["event.id"] == "91"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "91"
+          - set(attributes["event.action"], "user_authenticated") where attributes["event.id"] == "91"
+
+          # WinRM Request/Response Events (Event IDs 132-145)
+          - set(attributes["event.description"], "WinRM request received") where attributes["event.id"] == "132"
+          - set(attributes["event.category"], "WinRM Request") where attributes["event.id"] == "132"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "132"
+          - set(attributes["event.action"], "request_received") where attributes["event.id"] == "132"
+
+          - set(attributes["event.description"], "WinRM response sent") where attributes["event.id"] == "133"
+          - set(attributes["event.category"], "WinRM Response") where attributes["event.id"] == "133"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "133"
+          - set(attributes["event.action"], "response_sent") where attributes["event.id"] == "133"
+
+          - set(attributes["event.description"], "WinRM receiving data from client") where attributes["event.id"] == "134"
+          - set(attributes["event.category"], "WinRM Request") where attributes["event.id"] == "134"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "134"
+
+          - set(attributes["event.description"], "WinRM sending data to client") where attributes["event.id"] == "135"
+          - set(attributes["event.category"], "WinRM Response") where attributes["event.id"] == "135"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "135"
+
+          - set(attributes["event.description"], "WinRM request processed") where attributes["event.id"] == "142"
+          - set(attributes["event.category"], "WinRM Request") where attributes["event.id"] == "142"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "142"
+          - set(attributes["event.action"], "request_processed") where attributes["event.id"] == "142"
+
+          - set(attributes["event.description"], "WinRM operation timed out") where attributes["event.id"] == "143"
+          - set(attributes["event.category"], "WinRM Error") where attributes["event.id"] == "143"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "143"
+          - set(attributes["event.action"], "operation_timeout") where attributes["event.id"] == "143"
+
+          # WinRM Error Events (Event IDs 161-200)
+          - set(attributes["event.description"], "WinRM error occurred") where attributes["event.id"] == "161"
+          - set(attributes["event.category"], "WinRM Error") where attributes["event.id"] == "161"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "161"
+
+          - set(attributes["event.description"], "WinRM client connection failed") where attributes["event.id"] == "162"
+          - set(attributes["event.category"], "WinRM Error") where attributes["event.id"] == "162"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "162"
+          - set(attributes["event.action"], "connection_failed") where attributes["event.id"] == "162"
+
+          - set(attributes["event.description"], "WinRM client received HTTP error") where attributes["event.id"] == "163"
+          - set(attributes["event.category"], "WinRM Error") where attributes["event.id"] == "163"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "163"
+
+          - set(attributes["event.description"], "WinRM server authentication error") where attributes["event.id"] == "164"
+          - set(attributes["event.category"], "WinRM Error") where attributes["event.id"] == "164"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "164"
+
+          - set(attributes["event.description"], "WinRM certificate validation failed") where attributes["event.id"] == "165"
+          - set(attributes["event.category"], "WinRM Error") where attributes["event.id"] == "165"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "165"
+
+          # WinRM Listener Events (Event IDs 254-258)
+          - set(attributes["event.description"], "WinRM listener created") where attributes["event.id"] == "254"
+          - set(attributes["event.category"], "WinRM Listener") where attributes["event.id"] == "254"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "254"
+          - set(attributes["event.action"], "listener_created") where attributes["event.id"] == "254"
+
+          - set(attributes["event.description"], "WinRM listener deleted") where attributes["event.id"] == "255"
+          - set(attributes["event.category"], "WinRM Listener") where attributes["event.id"] == "255"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "255"
+          - set(attributes["event.action"], "listener_deleted") where attributes["event.id"] == "255"
+
+          - set(attributes["event.description"], "WinRM listener enabled") where attributes["event.id"] == "256"
+          - set(attributes["event.category"], "WinRM Listener") where attributes["event.id"] == "256"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "256"
+          - set(attributes["event.action"], "listener_enabled") where attributes["event.id"] == "256"
+
+          - set(attributes["event.description"], "WinRM listener disabled") where attributes["event.id"] == "257"
+          - set(attributes["event.category"], "WinRM Listener") where attributes["event.id"] == "257"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "257"
+          - set(attributes["event.action"], "listener_disabled") where attributes["event.id"] == "257"
+
+          # WinRM Plugin Events (Event IDs 309-320)
+          - set(attributes["event.description"], "WinRM plugin loaded") where attributes["event.id"] == "309"
+          - set(attributes["event.category"], "WinRM Plugin") where attributes["event.id"] == "309"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "309"
+          - set(attributes["event.action"], "plugin_loaded") where attributes["event.id"] == "309"
+
+          - set(attributes["event.description"], "WinRM plugin unloaded") where attributes["event.id"] == "310"
+          - set(attributes["event.category"], "WinRM Plugin") where attributes["event.id"] == "310"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "310"
+          - set(attributes["event.action"], "plugin_unloaded") where attributes["event.id"] == "310"
+
+          - set(attributes["event.description"], "WinRM plugin initialization failed") where attributes["event.id"] == "311"
+          - set(attributes["event.category"], "WinRM Plugin") where attributes["event.id"] == "311"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "311"
+          - set(attributes["event.action"], "plugin_init_failed") where attributes["event.id"] == "311"
+
+          # WinRM Quota Events (Event IDs 352-360)
+          - set(attributes["event.description"], "WinRM quota violation") where attributes["event.id"] == "352"
+          - set(attributes["event.category"], "WinRM Quota") where attributes["event.id"] == "352"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "352"
+          - set(attributes["event.action"], "quota_violated") where attributes["event.id"] == "352"
+
+          - set(attributes["event.description"], "WinRM maximum concurrent operations exceeded") where attributes["event.id"] == "353"
+          - set(attributes["event.category"], "WinRM Quota") where attributes["event.id"] == "353"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "353"
+
+          - set(attributes["event.description"], "WinRM maximum concurrent shells exceeded") where attributes["event.id"] == "354"
+          - set(attributes["event.category"], "WinRM Quota") where attributes["event.id"] == "354"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "354"
+
+          # Default for unknown events
+          - set(attributes["event.description"], "WinRM event") where attributes["event.description"] == nil
+          - set(attributes["event.category"], "WinRM") where attributes["event.category"] == nil
+
+  # Parse EventData fields
+  transform/winrm_eventdata_fields:
+    log_statements:
+      - context: log
+        statements:
+          # Extract connection information
+          - set(attributes["winrm.connection_string"], body["Event"]["EventData"]["connection"]) where body["Event"]["EventData"]["connection"] != nil
+
+          # Extract user information
+          - set(attributes["winrm.user"], body["Event"]["EventData"]["user"]) where body["Event"]["EventData"]["user"] != nil
+          - set(attributes["winrm.user"], body["Event"]["EventData"]["UserName"]) where body["Event"]["EventData"]["UserName"] != nil
+
+          # Extract shell ID
+          - set(attributes["winrm.shell_id"], body["Event"]["EventData"]["ShellId"]) where body["Event"]["EventData"]["ShellId"] != nil
+
+          # Extract command ID
+          - set(attributes["winrm.command_id"], body["Event"]["EventData"]["CommandId"]) where body["Event"]["EventData"]["CommandId"] != nil
+
+          # Extract command line
+          - set(attributes["winrm.command"], body["Event"]["EventData"]["CommandLine"]) where body["Event"]["EventData"]["CommandLine"] != nil
+          - set(attributes["winrm.command"], body["Event"]["EventData"]["command"]) where body["Event"]["EventData"]["command"] != nil
+
+          # Extract error code
+          - set(attributes["error.code"], body["Event"]["EventData"]["ErrorCode"]) where body["Event"]["EventData"]["ErrorCode"] != nil
+          - set(attributes["error.message"], body["Event"]["EventData"]["ErrorMessage"]) where body["Event"]["EventData"]["ErrorMessage"] != nil
+
+          # Extract client IP
+          - set(attributes["source.ip"], body["Event"]["EventData"]["ClientIP"]) where body["Event"]["EventData"]["ClientIP"] != nil
+
+          # Extract authentication method
+          - set(attributes["winrm.auth_method"], body["Event"]["EventData"]["AuthenticationMechanism"]) where body["Event"]["EventData"]["AuthenticationMechanism"] != nil
+
+          # Extract protocol version
+          - set(attributes["winrm.protocol_version"], body["Event"]["EventData"]["ProtocolVersion"]) where body["Event"]["EventData"]["ProtocolVersion"] != nil
+
+          # Extract resource URI
+          - set(attributes["winrm.resource_uri"], body["Event"]["EventData"]["ResourceURI"]) where body["Event"]["EventData"]["ResourceURI"] != nil
+
+          # Extract action URI
+          - set(attributes["winrm.action_uri"], body["Event"]["EventData"]["ActionURI"]) where body["Event"]["EventData"]["ActionURI"] != nil
+
+          # Extract listener information
+          - set(attributes["winrm.listener_address"], body["Event"]["EventData"]["Address"]) where body["Event"]["EventData"]["Address"] != nil
+          - set(attributes["winrm.listener_transport"], body["Event"]["EventData"]["Transport"]) where body["Event"]["EventData"]["Transport"] != nil
+          - set(attributes["winrm.listener_port"], body["Event"]["EventData"]["Port"]) where body["Event"]["EventData"]["Port"] != nil
+
+          # Extract plugin information
+          - set(attributes["winrm.plugin_name"], body["Event"]["EventData"]["PluginName"]) where body["Event"]["EventData"]["PluginName"] != nil
+
+  # Map to Splunk CIM fields
+  transform/winrm_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Microsoft Windows")
+          - set(attributes["vendor"], "Microsoft")
+          - set(attributes["product"], "Windows")
+          # CIM Destination
+          - set(attributes["dest"], attributes["host.name"]) where attributes["host.name"] != nil
+          # CIM Signature
+          - set(attributes["signature"], attributes["event.description"]) where attributes["event.description"] != nil
+          - set(attributes["signature_id"], attributes["event.id"]) where attributes["event.id"] != nil
+          # CIM Action
+          - set(attributes["action"], attributes["event.action"]) where attributes["event.action"] != nil
+          # CIM App
+          - set(attributes["app"], attributes["event.provider"]) where attributes["event.provider"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/winrm_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Microsoft")
+          - set(attributes["metadata.product_name"], "Windows")
+          - set(attributes["metadata.log_type"], "WINEVTLOG")
+          # UDM Principal
+          - set(attributes["principal.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Target
+          - set(attributes["target.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Security Result
+          - set(attributes["security_result.summary"], attributes["event.description"]) where attributes["event.description"] != nil
+
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to file
+  # file:
+  #   path: ./winrm-events.json
+
+service:
+  pipelines:
+    logs:
+      receivers: [windowseventlog/winrm]
+      processors:
+        - transform/winrm_eventdata
+        - transform/winrm_event_descriptions
+        - transform/winrm_eventdata_fields
+        - transform/winrm_cim
+        - transform/winrm_udm
+      exporters: [logging]

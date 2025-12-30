@@ -1,0 +1,323 @@
+# OpenTelemetry Collector Configuration for Windows PowerShell Event Log
+# This configuration ingests PowerShell operational logs and transforms them to human-readable format
+
+receivers:
+  windowseventlog/powershell:
+    channel: Microsoft-Windows-PowerShell/Operational
+    max_reads: 100
+    start_at: end
+    poll_interval: 1s
+    attributes:
+      log.source: "windows.powershell"
+    raw: true  # Get raw XML for full parsing
+
+processors:
+  # Extract and parse EventData XML fields
+  transform/powershell_eventdata:
+    log_statements:
+      - context: log
+        statements:
+          # Extract event record ID
+          - set(attributes["event.record_id"], body["Event"]["System"]["EventRecordID"]) where body["Event"]["System"]["EventRecordID"] != nil
+
+          # Extract provider name
+          - set(attributes["event.provider"], body["Event"]["System"]["Provider"]["@Name"]) where body["Event"]["System"]["Provider"]["@Name"] != nil
+
+          # Extract event ID
+          - set(attributes["event.id"], body["Event"]["System"]["EventID"]) where body["Event"]["System"]["EventID"] != nil
+
+          # Extract event level
+          - set(attributes["event.level"], body["Event"]["System"]["Level"]) where body["Event"]["System"]["Level"] != nil
+
+          # Extract computer name
+          - set(attributes["host.name"], body["Event"]["System"]["Computer"]) where body["Event"]["System"]["Computer"] != nil
+
+          # Extract user SID
+          - set(attributes["user.sid"], body["Event"]["System"]["Security"]["@UserID"]) where body["Event"]["System"]["Security"]["@UserID"] != nil
+
+          # Extract time created
+          - set(attributes["event.created"], body["Event"]["System"]["TimeCreated"]["@SystemTime"]) where body["Event"]["System"]["TimeCreated"]["@SystemTime"] != nil
+
+          # Extract process ID
+          - set(attributes["process.pid"], body["Event"]["System"]["Execution"]["@ProcessID"]) where body["Event"]["System"]["Execution"]["@ProcessID"] != nil
+
+  # Transform Event IDs to human-readable descriptions
+  transform/powershell_event_descriptions:
+    log_statements:
+      - context: log
+        statements:
+          # PowerShell Engine Lifecycle Events (Event IDs 400, 403, 600)
+          - set(attributes["event.description"], "PowerShell engine started") where attributes["event.id"] == "400"
+          - set(attributes["event.category"], "PowerShell Engine") where attributes["event.id"] == "400"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "400"
+          - set(attributes["event.action"], "engine_started") where attributes["event.id"] == "400"
+
+          - set(attributes["event.description"], "PowerShell engine stopped") where attributes["event.id"] == "403"
+          - set(attributes["event.category"], "PowerShell Engine") where attributes["event.id"] == "403"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "403"
+          - set(attributes["event.action"], "engine_stopped") where attributes["event.id"] == "403"
+
+          - set(attributes["event.description"], "PowerShell provider started") where attributes["event.id"] == "600"
+          - set(attributes["event.category"], "PowerShell Provider") where attributes["event.id"] == "600"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "600"
+
+          # PowerShell Command Execution Events (Event IDs 4100-4104)
+          - set(attributes["event.description"], "PowerShell command started") where attributes["event.id"] == "4100"
+          - set(attributes["event.category"], "PowerShell Execution") where attributes["event.id"] == "4100"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4100"
+          - set(attributes["event.action"], "command_started") where attributes["event.id"] == "4100"
+
+          - set(attributes["event.description"], "PowerShell command completed") where attributes["event.id"] == "4101"
+          - set(attributes["event.category"], "PowerShell Execution") where attributes["event.id"] == "4101"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4101"
+          - set(attributes["event.action"], "command_completed") where attributes["event.id"] == "4101"
+
+          - set(attributes["event.description"], "PowerShell remote command execution") where attributes["event.id"] == "4102"
+          - set(attributes["event.category"], "PowerShell Execution") where attributes["event.id"] == "4102"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4102"
+          - set(attributes["event.action"], "remote_command") where attributes["event.id"] == "4102"
+
+          - set(attributes["event.description"], "PowerShell module logging") where attributes["event.id"] == "4103"
+          - set(attributes["event.category"], "PowerShell Logging") where attributes["event.id"] == "4103"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4103"
+          - set(attributes["event.action"], "module_logging") where attributes["event.id"] == "4103"
+
+          - set(attributes["event.description"], "PowerShell script block logging") where attributes["event.id"] == "4104"
+          - set(attributes["event.category"], "PowerShell Logging") where attributes["event.id"] == "4104"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4104"
+          - set(attributes["event.action"], "scriptblock_logging") where attributes["event.id"] == "4104"
+
+          # PowerShell Remoting Events (Event IDs 8193-8197)
+          - set(attributes["event.description"], "PowerShell session opened") where attributes["event.id"] == "8193"
+          - set(attributes["event.category"], "PowerShell Remoting") where attributes["event.id"] == "8193"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "8193"
+          - set(attributes["event.action"], "session_opened") where attributes["event.id"] == "8193"
+
+          - set(attributes["event.description"], "PowerShell session closed") where attributes["event.id"] == "8194"
+          - set(attributes["event.category"], "PowerShell Remoting") where attributes["event.id"] == "8194"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "8194"
+          - set(attributes["event.action"], "session_closed") where attributes["event.id"] == "8194"
+
+          - set(attributes["event.description"], "PowerShell connection attempt") where attributes["event.id"] == "8195"
+          - set(attributes["event.category"], "PowerShell Remoting") where attributes["event.id"] == "8195"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "8195"
+          - set(attributes["event.action"], "connection_attempt") where attributes["event.id"] == "8195"
+
+          - set(attributes["event.description"], "PowerShell connection succeeded") where attributes["event.id"] == "8196"
+          - set(attributes["event.category"], "PowerShell Remoting") where attributes["event.id"] == "8196"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "8196"
+          - set(attributes["event.action"], "connection_success") where attributes["event.id"] == "8196"
+
+          - set(attributes["event.description"], "PowerShell connection failed") where attributes["event.id"] == "8197"
+          - set(attributes["event.category"], "PowerShell Remoting") where attributes["event.id"] == "8197"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "8197"
+          - set(attributes["event.action"], "connection_failed") where attributes["event.id"] == "8197"
+
+          # PowerShell Error Events (Event IDs 800, 801, 802)
+          - set(attributes["event.description"], "PowerShell pipeline execution error") where attributes["event.id"] == "800"
+          - set(attributes["event.category"], "PowerShell Error") where attributes["event.id"] == "800"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "800"
+
+          - set(attributes["event.description"], "PowerShell command error") where attributes["event.id"] == "801"
+          - set(attributes["event.category"], "PowerShell Error") where attributes["event.id"] == "801"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "801"
+
+          - set(attributes["event.description"], "PowerShell provider error") where attributes["event.id"] == "802"
+          - set(attributes["event.category"], "PowerShell Error") where attributes["event.id"] == "802"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "802"
+
+          # PowerShell Pipeline Events (Event IDs 800-820)
+          - set(attributes["event.description"], "PowerShell pipeline created") where attributes["event.id"] == "810"
+          - set(attributes["event.category"], "PowerShell Pipeline") where attributes["event.id"] == "810"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "810"
+
+          - set(attributes["event.description"], "PowerShell pipeline completed") where attributes["event.id"] == "811"
+          - set(attributes["event.category"], "PowerShell Pipeline") where attributes["event.id"] == "811"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "811"
+
+          # PowerShell Job Events (Event IDs 1-7)
+          - set(attributes["event.description"], "PowerShell job started") where attributes["event.id"] == "1"
+          - set(attributes["event.category"], "PowerShell Job") where attributes["event.id"] == "1"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1"
+          - set(attributes["event.action"], "job_started") where attributes["event.id"] == "1"
+
+          - set(attributes["event.description"], "PowerShell job stopped") where attributes["event.id"] == "2"
+          - set(attributes["event.category"], "PowerShell Job") where attributes["event.id"] == "2"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "2"
+          - set(attributes["event.action"], "job_stopped") where attributes["event.id"] == "2"
+
+          - set(attributes["event.description"], "PowerShell job completed") where attributes["event.id"] == "3"
+          - set(attributes["event.category"], "PowerShell Job") where attributes["event.id"] == "3"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "3"
+          - set(attributes["event.action"], "job_completed") where attributes["event.id"] == "3"
+
+          - set(attributes["event.description"], "PowerShell job failed") where attributes["event.id"] == "4"
+          - set(attributes["event.category"], "PowerShell Job") where attributes["event.id"] == "4"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "4"
+          - set(attributes["event.action"], "job_failed") where attributes["event.id"] == "4"
+
+          # PowerShell Security Events (Event IDs 4105-4106, 40961-40962)
+          - set(attributes["event.description"], "PowerShell script execution started") where attributes["event.id"] == "4105"
+          - set(attributes["event.category"], "PowerShell Security") where attributes["event.id"] == "4105"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4105"
+          - set(attributes["event.action"], "script_started") where attributes["event.id"] == "4105"
+
+          - set(attributes["event.description"], "PowerShell script execution stopped") where attributes["event.id"] == "4106"
+          - set(attributes["event.category"], "PowerShell Security") where attributes["event.id"] == "4106"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4106"
+          - set(attributes["event.action"], "script_stopped") where attributes["event.id"] == "4106"
+
+          - set(attributes["event.description"], "PowerShell suspicious script block detected") where attributes["event.id"] == "40961"
+          - set(attributes["event.category"], "PowerShell Security") where attributes["event.id"] == "40961"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "40961"
+          - set(attributes["event.action"], "suspicious_scriptblock") where attributes["event.id"] == "40961"
+
+          - set(attributes["event.description"], "PowerShell suspicious script detected") where attributes["event.id"] == "40962"
+          - set(attributes["event.category"], "PowerShell Security") where attributes["event.id"] == "40962"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "40962"
+          - set(attributes["event.action"], "suspicious_script") where attributes["event.id"] == "40962"
+
+          # PowerShell Transcript Events (Event IDs 53504, 53505)
+          - set(attributes["event.description"], "PowerShell transcript started") where attributes["event.id"] == "53504"
+          - set(attributes["event.category"], "PowerShell Transcript") where attributes["event.id"] == "53504"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "53504"
+          - set(attributes["event.action"], "transcript_started") where attributes["event.id"] == "53504"
+
+          - set(attributes["event.description"], "PowerShell transcript stopped") where attributes["event.id"] == "53505"
+          - set(attributes["event.category"], "PowerShell Transcript") where attributes["event.id"] == "53505"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "53505"
+          - set(attributes["event.action"], "transcript_stopped") where attributes["event.id"] == "53505"
+
+          # PowerShell Configuration Events (Event IDs 7936-7945)
+          - set(attributes["event.description"], "PowerShell execution policy changed") where attributes["event.id"] == "7937"
+          - set(attributes["event.category"], "PowerShell Configuration") where attributes["event.id"] == "7937"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "7937"
+          - set(attributes["event.action"], "execution_policy_changed") where attributes["event.id"] == "7937"
+
+          # Default for unknown events
+          - set(attributes["event.description"], "PowerShell event") where attributes["event.description"] == nil
+          - set(attributes["event.category"], "PowerShell") where attributes["event.category"] == nil
+
+  # Parse EventData fields
+  transform/powershell_eventdata_fields:
+    log_statements:
+      - context: log
+        statements:
+          # Extract command/script content
+          - set(attributes["powershell.command"], body["Event"]["EventData"]["CommandLine"]) where body["Event"]["EventData"]["CommandLine"] != nil
+          - set(attributes["powershell.script_block"], body["Event"]["EventData"]["ScriptBlockText"]) where body["Event"]["EventData"]["ScriptBlockText"] != nil
+          - set(attributes["powershell.script_block_id"], body["Event"]["EventData"]["ScriptBlockId"]) where body["Event"]["EventData"]["ScriptBlockId"] != nil
+
+          # Extract user context
+          - set(attributes["powershell.user"], body["Event"]["EventData"]["User"]) where body["Event"]["EventData"]["User"] != nil
+          - set(attributes["powershell.user"], body["Event"]["EventData"]["UserId"]) where body["Event"]["EventData"]["UserId"] != nil
+
+          # Extract host information
+          - set(attributes["powershell.host_name"], body["Event"]["EventData"]["HostName"]) where body["Event"]["EventData"]["HostName"] != nil
+          - set(attributes["powershell.host_version"], body["Event"]["EventData"]["HostVersion"]) where body["Event"]["EventData"]["HostVersion"] != nil
+          - set(attributes["powershell.host_id"], body["Event"]["EventData"]["HostId"]) where body["Event"]["EventData"]["HostId"] != nil
+          - set(attributes["powershell.host_application"], body["Event"]["EventData"]["HostApplication"]) where body["Event"]["EventData"]["HostApplication"] != nil
+
+          # Extract engine information
+          - set(attributes["powershell.engine_version"], body["Event"]["EventData"]["EngineVersion"]) where body["Event"]["EventData"]["EngineVersion"] != nil
+          - set(attributes["powershell.runspace_id"], body["Event"]["EventData"]["RunspaceId"]) where body["Event"]["EventData"]["RunspaceId"] != nil
+
+          # Extract pipeline information
+          - set(attributes["powershell.pipeline_id"], body["Event"]["EventData"]["PipelineId"]) where body["Event"]["EventData"]["PipelineId"] != nil
+
+          # Extract command information
+          - set(attributes["powershell.command_name"], body["Event"]["EventData"]["CommandName"]) where body["Event"]["EventData"]["CommandName"] != nil
+          - set(attributes["powershell.command_type"], body["Event"]["EventData"]["CommandType"]) where body["Event"]["EventData"]["CommandType"] != nil
+          - set(attributes["powershell.command_path"], body["Event"]["EventData"]["CommandPath"]) where body["Event"]["EventData"]["CommandPath"] != nil
+
+          # Extract error information
+          - set(attributes["error.message"], body["Event"]["EventData"]["ErrorMessage"]) where body["Event"]["EventData"]["ErrorMessage"] != nil
+          - set(attributes["error.id"], body["Event"]["EventData"]["ErrorId"]) where body["Event"]["EventData"]["ErrorId"] != nil
+          - set(attributes["exception.type"], body["Event"]["EventData"]["ExceptionType"]) where body["Event"]["EventData"]["ExceptionType"] != nil
+
+          # Extract execution policy
+          - set(attributes["powershell.execution_policy"], body["Event"]["EventData"]["NewExecutionPolicy"]) where body["Event"]["EventData"]["NewExecutionPolicy"] != nil
+          - set(attributes["powershell.execution_policy_previous"], body["Event"]["EventData"]["PreviousExecutionPolicy"]) where body["Event"]["EventData"]["PreviousExecutionPolicy"] != nil
+
+          # Extract module information
+          - set(attributes["powershell.module_name"], body["Event"]["EventData"]["ModuleName"]) where body["Event"]["EventData"]["ModuleName"] != nil
+          - set(attributes["powershell.module_version"], body["Event"]["EventData"]["ModuleVersion"]) where body["Event"]["EventData"]["ModuleVersion"] != nil
+
+          # Extract remote connection information
+          - set(attributes["powershell.remote_computer"], body["Event"]["EventData"]["ComputerName"]) where body["Event"]["EventData"]["ComputerName"] != nil
+          - set(attributes["powershell.connection_uri"], body["Event"]["EventData"]["ConnectionUri"]) where body["Event"]["EventData"]["ConnectionUri"] != nil
+          - set(attributes["powershell.shell_id"], body["Event"]["EventData"]["ShellId"]) where body["Event"]["EventData"]["ShellId"] != nil
+
+          # Extract transcript file path
+          - set(attributes["powershell.transcript_path"], body["Event"]["EventData"]["OutputFilePath"]) where body["Event"]["EventData"]["OutputFilePath"] != nil
+
+          # Extract message level for script block logging
+          - set(attributes["powershell.message_level"], body["Event"]["EventData"]["MessageLevel"]) where body["Event"]["EventData"]["MessageLevel"] != nil
+          - set(attributes["powershell.message_total"], body["Event"]["EventData"]["MessageTotal"]) where body["Event"]["EventData"]["MessageTotal"] != nil
+          - set(attributes["powershell.message_number"], body["Event"]["EventData"]["MessageNumber"]) where body["Event"]["EventData"]["MessageNumber"] != nil
+
+          # Extract script block path
+          - set(attributes["powershell.script_path"], body["Event"]["EventData"]["Path"]) where body["Event"]["EventData"]["Path"] != nil
+
+  # Map to Splunk CIM fields
+  transform/powershell_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Microsoft Windows")
+          - set(attributes["vendor"], "Microsoft")
+          - set(attributes["product"], "Windows")
+          # CIM Destination
+          - set(attributes["dest"], attributes["host.name"]) where attributes["host.name"] != nil
+          # CIM Signature
+          - set(attributes["signature"], attributes["event.description"]) where attributes["event.description"] != nil
+          - set(attributes["signature_id"], attributes["event.id"]) where attributes["event.id"] != nil
+          # CIM Action
+          - set(attributes["action"], attributes["event.action"]) where attributes["event.action"] != nil
+          # CIM App
+          - set(attributes["app"], attributes["event.provider"]) where attributes["event.provider"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/powershell_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Microsoft")
+          - set(attributes["metadata.product_name"], "Windows")
+          - set(attributes["metadata.log_type"], "WINEVTLOG")
+          # UDM Principal
+          - set(attributes["principal.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Target
+          - set(attributes["target.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Security Result
+          - set(attributes["security_result.summary"], attributes["event.description"]) where attributes["event.description"] != nil
+
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to file
+  # file:
+  #   path: ./powershell-events.json
+
+service:
+  pipelines:
+    logs:
+      receivers: [windowseventlog/powershell]
+      processors:
+        - transform/powershell_eventdata
+        - transform/powershell_event_descriptions
+        - transform/powershell_eventdata_fields
+        - transform/powershell_cim
+        - transform/powershell_udm
+      exporters: [logging]

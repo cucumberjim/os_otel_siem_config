@@ -1,0 +1,287 @@
+# OpenTelemetry Collector Configuration for Windows Application Event Log
+# This configuration ingests Application event logs and transforms them to human-readable format
+
+receivers:
+  windowseventlog/application:
+    channel: Application
+    max_reads: 100
+    start_at: end
+    poll_interval: 1s
+    attributes:
+      log.source: "windows.application"
+    raw: true  # Get raw XML for full parsing
+
+processors:
+  # Extract and parse EventData XML fields
+  transform/application_eventdata:
+    log_statements:
+      - context: log
+        statements:
+          # Extract event record ID
+          - set(attributes["event.record_id"], body["Event"]["System"]["EventRecordID"]) where body["Event"]["System"]["EventRecordID"] != nil
+
+          # Extract provider name
+          - set(attributes["event.provider"], body["Event"]["System"]["Provider"]["@Name"]) where body["Event"]["System"]["Provider"]["@Name"] != nil
+
+          # Extract event ID
+          - set(attributes["event.id"], body["Event"]["System"]["EventID"]) where body["Event"]["System"]["EventID"] != nil
+
+          # Extract event level
+          - set(attributes["event.level"], body["Event"]["System"]["Level"]) where body["Event"]["System"]["Level"] != nil
+
+          # Extract computer name
+          - set(attributes["host.name"], body["Event"]["System"]["Computer"]) where body["Event"]["System"]["Computer"] != nil
+
+          # Extract user SID
+          - set(attributes["user.sid"], body["Event"]["System"]["Security"]["@UserID"]) where body["Event"]["System"]["Security"]["@UserID"] != nil
+
+          # Extract time created
+          - set(attributes["event.created"], body["Event"]["System"]["TimeCreated"]["@SystemTime"]) where body["Event"]["System"]["TimeCreated"]["@SystemTime"] != nil
+
+          # Extract process ID
+          - set(attributes["process.pid"], body["Event"]["System"]["Execution"]["@ProcessID"]) where body["Event"]["System"]["Execution"]["@ProcessID"] != nil
+
+          # Extract thread ID
+          - set(attributes["process.thread_id"], body["Event"]["System"]["Execution"]["@ThreadID"]) where body["Event"]["System"]["Execution"]["@ThreadID"] != nil
+
+  # Transform Event IDs to human-readable descriptions
+  transform/application_event_descriptions:
+    log_statements:
+      - context: log
+        statements:
+          # Application Error Events (Event IDs 1000-1002)
+          - set(attributes["event.description"], "Application error") where attributes["event.id"] == "1000"
+          - set(attributes["event.category"], "Application Error") where attributes["event.id"] == "1000"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "1000"
+
+          - set(attributes["event.description"], "Application hang") where attributes["event.id"] == "1001"
+          - set(attributes["event.category"], "Application Hang") where attributes["event.id"] == "1001"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "1001"
+
+          - set(attributes["event.description"], "Application recovery") where attributes["event.id"] == "1002"
+          - set(attributes["event.category"], "Application Error") where attributes["event.id"] == "1002"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1002"
+
+          # Windows Error Reporting (Event IDs 1001-1008)
+          - set(attributes["event.description"], "Windows Error Reporting fault bucket") where attributes["event.id"] == "1001"
+          - set(attributes["event.category"], "Windows Error Reporting") where attributes["event.id"] == "1001"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1001"
+
+          # .NET Runtime Events (Event IDs 1000, 1026)
+          - set(attributes["event.description"], ".NET Runtime application error") where attributes["event.id"] == "1000" and attributes["event.provider"] == ".NET Runtime"
+          - set(attributes["event.category"], ".NET Runtime") where attributes["event.id"] == "1000" and attributes["event.provider"] == ".NET Runtime"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "1000" and attributes["event.provider"] == ".NET Runtime"
+
+          - set(attributes["event.description"], ".NET Runtime unhandled exception") where attributes["event.id"] == "1026"
+          - set(attributes["event.category"], ".NET Runtime") where attributes["event.id"] == "1026"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "1026"
+
+          # Application-Specific Events (Event IDs 1-100)
+          - set(attributes["event.description"], "Application started") where attributes["event.id"] == "1"
+          - set(attributes["event.category"], "Application Lifecycle") where attributes["event.id"] == "1"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1"
+
+          - set(attributes["event.description"], "Application stopped") where attributes["event.id"] == "2"
+          - set(attributes["event.category"], "Application Lifecycle") where attributes["event.id"] == "2"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "2"
+
+          # MSI Installer Events (Event IDs 1000-1042)
+          - set(attributes["event.description"], "MSI product installation started") where attributes["event.id"] == "1033"
+          - set(attributes["event.category"], "MSI Installer") where attributes["event.id"] == "1033"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1033"
+
+          - set(attributes["event.description"], "MSI product installation completed") where attributes["event.id"] == "1034"
+          - set(attributes["event.category"], "MSI Installer") where attributes["event.id"] == "1034"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1034"
+
+          - set(attributes["event.description"], "MSI product removal started") where attributes["event.id"] == "1035"
+          - set(attributes["event.category"], "MSI Installer") where attributes["event.id"] == "1035"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1035"
+
+          - set(attributes["event.description"], "MSI product removal completed") where attributes["event.id"] == "1036"
+          - set(attributes["event.category"], "MSI Installer") where attributes["event.id"] == "1036"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1036"
+
+          - set(attributes["event.description"], "MSI product update started") where attributes["event.id"] == "1037"
+          - set(attributes["event.category"], "MSI Installer") where attributes["event.id"] == "1037"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1037"
+
+          - set(attributes["event.description"], "MSI product update completed") where attributes["event.id"] == "1038"
+          - set(attributes["event.category"], "MSI Installer") where attributes["event.id"] == "1038"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1038"
+
+          - set(attributes["event.description"], "MSI installation failed") where attributes["event.id"] == "1042"
+          - set(attributes["event.category"], "MSI Installer") where attributes["event.id"] == "1042"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "1042"
+
+          # ESENT Events (Event IDs 100-999)
+          - set(attributes["event.description"], "ESENT database engine initialized") where attributes["event.id"] == "100"
+          - set(attributes["event.category"], "ESENT") where attributes["event.id"] == "100"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "100"
+
+          - set(attributes["event.description"], "ESENT database engine stopped") where attributes["event.id"] == "102"
+          - set(attributes["event.category"], "ESENT") where attributes["event.id"] == "102"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "102"
+
+          - set(attributes["event.description"], "ESENT database corruption detected") where attributes["event.id"] == "104"
+          - set(attributes["event.category"], "ESENT") where attributes["event.id"] == "104"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "104"
+
+          - set(attributes["event.description"], "ESENT database backed up") where attributes["event.id"] == "210"
+          - set(attributes["event.category"], "ESENT") where attributes["event.id"] == "210"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "210"
+
+          - set(attributes["event.description"], "ESENT database restored") where attributes["event.id"] == "212"
+          - set(attributes["event.category"], "ESENT") where attributes["event.id"] == "212"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "212"
+
+          - set(attributes["event.description"], "ESENT log file corruption") where attributes["event.id"] == "413"
+          - set(attributes["event.category"], "ESENT") where attributes["event.id"] == "413"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "413"
+
+          - set(attributes["event.description"], "ESENT database full") where attributes["event.id"] == "455"
+          - set(attributes["event.category"], "ESENT") where attributes["event.id"] == "455"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "455"
+
+          # SideBySide Events (Event IDs 33-80)
+          - set(attributes["event.description"], "SideBySide activation context generation failed") where attributes["event.id"] == "33"
+          - set(attributes["event.category"], "SideBySide") where attributes["event.id"] == "33"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "33"
+
+          - set(attributes["event.description"], "SideBySide dependent assembly missing") where attributes["event.id"] == "59"
+          - set(attributes["event.category"], "SideBySide") where attributes["event.id"] == "59"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "59"
+
+          - set(attributes["event.description"], "SideBySide manifest parse error") where attributes["event.id"] == "63"
+          - set(attributes["event.category"], "SideBySide") where attributes["event.id"] == "63"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "63"
+
+          - set(attributes["event.description"], "SideBySide manifest definition identity invalid") where attributes["event.id"] == "80"
+          - set(attributes["event.category"], "SideBySide") where attributes["event.id"] == "80"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "80"
+
+          # VSS (Volume Shadow Copy) Events (Event IDs 8193-8225)
+          - set(attributes["event.description"], "VSS service started") where attributes["event.id"] == "8193"
+          - set(attributes["event.category"], "Volume Shadow Copy") where attributes["event.id"] == "8193"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "8193"
+
+          - set(attributes["event.description"], "VSS service stopped") where attributes["event.id"] == "8194"
+          - set(attributes["event.category"], "Volume Shadow Copy") where attributes["event.id"] == "8194"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "8194"
+
+          - set(attributes["event.description"], "VSS shadow copy creation started") where attributes["event.id"] == "8210"
+          - set(attributes["event.category"], "Volume Shadow Copy") where attributes["event.id"] == "8210"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "8210"
+
+          - set(attributes["event.description"], "VSS shadow copy creation failed") where attributes["event.id"] == "8193"
+          - set(attributes["event.category"], "Volume Shadow Copy") where attributes["event.id"] == "8193"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "8193"
+
+          # Perflib Events (Event IDs 1008-1023)
+          - set(attributes["event.description"], "Performance counter provider failed to load") where attributes["event.id"] == "1008"
+          - set(attributes["event.category"], "Performance Library") where attributes["event.id"] == "1008"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "1008"
+
+          - set(attributes["event.description"], "Performance counter disabled") where attributes["event.id"] == "1023"
+          - set(attributes["event.category"], "Performance Library") where attributes["event.id"] == "1023"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "1023"
+
+          # Microsoft Office Events (Common Event IDs)
+          - set(attributes["event.description"], "Office application crash") where attributes["event.id"] == "1000" and Contains(attributes["event.provider"], "Office")
+          - set(attributes["event.category"], "Microsoft Office") where attributes["event.id"] == "1000" and Contains(attributes["event.provider"], "Office")
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "1000" and Contains(attributes["event.provider"], "Office")
+
+          # Default for unknown events
+          - set(attributes["event.description"], "Application event") where attributes["event.description"] == nil
+          - set(attributes["event.category"], "Application") where attributes["event.category"] == nil
+
+  # Parse EventData fields
+  transform/application_eventdata_fields:
+    log_statements:
+      - context: log
+        statements:
+          # For Application Error events, extract application name, version, and exception info
+          - set(attributes["application.name"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "AppName"
+          - set(attributes["application.version"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "AppVersion"
+          - set(attributes["exception.type"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "ExceptionType"
+          - set(attributes["exception.message"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "ExceptionMessage"
+
+          # For list-based EventData
+          - set(attributes["application.name"], body["Event"]["EventData"]["Data"][0]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][0]["@Name"] == "AppName"
+          - set(attributes["application.version"], body["Event"]["EventData"]["Data"][1]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][1]["@Name"] == "AppVersion"
+          - set(attributes["faulting.module"], body["Event"]["EventData"]["Data"][3]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][3]["@Name"] == "ModuleName"
+          - set(attributes["faulting.module.version"], body["Event"]["EventData"]["Data"][4]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][4]["@Name"] == "ModuleVersion"
+          - set(attributes["exception.code"], body["Event"]["EventData"]["Data"][5]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][5]["@Name"] == "ExceptionCode"
+          - set(attributes["exception.offset"], body["Event"]["EventData"]["Data"][6]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][6]["@Name"] == "Offset"
+
+          # For MSI installer events
+          - set(attributes["msi.product_name"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "ProductName"
+          - set(attributes["msi.product_version"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "ProductVersion"
+          - set(attributes["msi.product_code"], body["Event"]["EventData"]["Data"]["#text"]) where body["Event"]["EventData"]["Data"]["@Name"] == "ProductCode"
+
+          # Extract from list
+          - set(attributes["msi.product_name"], body["Event"]["EventData"]["Data"][0]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][0]["@Name"] == "ProductName"
+          - set(attributes["msi.product_version"], body["Event"]["EventData"]["Data"][1]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][1]["@Name"] == "ProductVersion"
+
+  # Map to Splunk CIM fields
+  transform/application_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Microsoft Windows")
+          - set(attributes["vendor"], "Microsoft")
+          - set(attributes["product"], "Windows")
+          # CIM Destination
+          - set(attributes["dest"], attributes["host.name"]) where attributes["host.name"] != nil
+          # CIM Signature
+          - set(attributes["signature"], attributes["event.description"]) where attributes["event.description"] != nil
+          - set(attributes["signature_id"], attributes["event.id"]) where attributes["event.id"] != nil
+          # CIM Action
+          - set(attributes["action"], attributes["event.action"]) where attributes["event.action"] != nil
+          # CIM App
+          - set(attributes["app"], attributes["event.provider"]) where attributes["event.provider"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/application_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Microsoft")
+          - set(attributes["metadata.product_name"], "Windows")
+          - set(attributes["metadata.log_type"], "WINEVTLOG")
+          # UDM Principal
+          - set(attributes["principal.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Target
+          - set(attributes["target.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Security Result
+          - set(attributes["security_result.summary"], attributes["event.description"]) where attributes["event.description"] != nil
+
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to file
+  # file:
+  #   path: ./application-events.json
+
+service:
+  pipelines:
+    logs:
+      receivers: [windowseventlog/application]
+      processors:
+        - transform/application_eventdata
+        - transform/application_event_descriptions
+        - transform/application_eventdata_fields
+        - transform/application_cim
+        - transform/application_udm
+      exporters: [logging]

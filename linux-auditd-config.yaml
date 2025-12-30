@@ -1,0 +1,233 @@
+# OpenTelemetry Collector Configuration for Linux Auditd Logs (Rocky 9)
+# This configuration ingests auditd logs and transforms them with Splunk CIM and Google SecOps UDM compliant field names
+
+receivers:
+  filelog/auditd:
+    include:
+      - /var/log/audit/audit.log
+    start_at: end
+    operators:
+      # Parse auditd log format: type=TYPE msg=audit(timestamp:sequence): key=value pairs
+      - type: regex_parser
+        regex: '^type=(?P<audit_type>\S+)\s+msg=audit\((?P<audit_timestamp>[\d.]+):(?P<audit_sequence>\d+)\):\s*(?P<audit_data>.*)$'
+        timestamp:
+          parse_from: attributes.audit_timestamp
+          layout_type: epoch
+          layout: s.ms
+
+      # Parse key-value pairs from audit_data
+      - type: key_value_parser
+        parse_from: attributes.audit_data
+        pair_separator: ' '
+        key_value_separator: '='
+
+processors:
+  # Extract and standardize auditd fields
+  transform/auditd_extract:
+    log_statements:
+      - context: log
+        statements:
+          # Set source metadata
+          - set(attributes["log.source"], "linux.auditd")
+          - set(attributes["log.source.type"], "auditd")
+
+          # Store original audit type
+          - set(attributes["audit.record_type"], attributes["audit_type"]) where attributes["audit_type"] != nil
+          - set(attributes["audit.sequence"], attributes["audit_sequence"]) where attributes["audit_sequence"] != nil
+
+          # Extract common fields
+          - set(attributes["audit.pid"], attributes["pid"]) where attributes["pid"] != nil
+          - set(attributes["audit.ppid"], attributes["ppid"]) where attributes["ppid"] != nil
+          - set(attributes["audit.uid"], attributes["uid"]) where attributes["uid"] != nil
+          - set(attributes["audit.auid"], attributes["auid"]) where attributes["auid"] != nil
+          - set(attributes["audit.gid"], attributes["gid"]) where attributes["gid"] != nil
+          - set(attributes["audit.euid"], attributes["euid"]) where attributes["euid"] != nil
+          - set(attributes["audit.suid"], attributes["suid"]) where attributes["suid"] != nil
+          - set(attributes["audit.fsuid"], attributes["fsuid"]) where attributes["fsuid"] != nil
+          - set(attributes["audit.ses"], attributes["ses"]) where attributes["ses"] != nil
+
+          # Extract executable and command information
+          - set(attributes["audit.exe"], attributes["exe"]) where attributes["exe"] != nil
+          - set(attributes["audit.comm"], attributes["comm"]) where attributes["comm"] != nil
+          - set(attributes["audit.cmd"], attributes["cmd"]) where attributes["cmd"] != nil
+
+          # Extract result/success
+          - set(attributes["audit.result"], attributes["res"]) where attributes["res"] != nil
+          - set(attributes["audit.success"], attributes["success"]) where attributes["success"] != nil
+
+          # Extract hostname/address
+          - set(attributes["audit.hostname"], attributes["hostname"]) where attributes["hostname"] != nil
+          - set(attributes["audit.addr"], attributes["addr"]) where attributes["addr"] != nil
+
+          # Extract terminal
+          - set(attributes["audit.terminal"], attributes["terminal"]) where attributes["terminal"] != nil
+
+  # Map to Splunk CIM fields
+  transform/auditd_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Linux Auditd")
+          - set(attributes["vendor"], "Linux")
+          - set(attributes["product"], "auditd")
+
+          # Map audit types to CIM actions and categories
+          # Authentication events
+          - set(attributes["action"], "success") where attributes["audit_type"] == "USER_AUTH" and attributes["res"] == "success"
+          - set(attributes["action"], "failure") where attributes["audit_type"] == "USER_AUTH" and attributes["res"] == "failed"
+          - set(attributes["action"], "success") where attributes["audit_type"] == "USER_LOGIN" and attributes["res"] == "success"
+          - set(attributes["action"], "failure") where attributes["audit_type"] == "USER_LOGIN" and attributes["res"] == "failed"
+          - set(attributes["signature"], "User Authentication") where attributes["audit_type"] == "USER_AUTH"
+          - set(attributes["signature"], "User Login") where attributes["audit_type"] == "USER_LOGIN"
+          - set(attributes["signature"], "User Logout") where attributes["audit_type"] == "USER_LOGOUT"
+
+          # Process execution
+          - set(attributes["action"], "allowed") where attributes["audit_type"] == "EXECVE"
+          - set(attributes["action"], "allowed") where attributes["audit_type"] == "SYSCALL"
+          - set(attributes["signature"], "Process Execution") where attributes["audit_type"] == "EXECVE"
+          - set(attributes["signature"], "System Call") where attributes["audit_type"] == "SYSCALL"
+
+          # Service events
+          - set(attributes["action"], "started") where attributes["audit_type"] == "SERVICE_START"
+          - set(attributes["action"], "stopped") where attributes["audit_type"] == "SERVICE_STOP"
+          - set(attributes["signature"], "Service Control") where attributes["audit_type"] == "SERVICE_START" or attributes["audit_type"] == "SERVICE_STOP"
+
+          # User commands
+          - set(attributes["signature"], "User Command") where attributes["audit_type"] == "USER_CMD"
+          - set(attributes["action"], "allowed") where attributes["audit_type"] == "USER_CMD"
+
+          # Credential events
+          - set(attributes["signature"], "Credential Acquisition") where attributes["audit_type"] == "CRED_ACQ"
+          - set(attributes["signature"], "Credential Disposal") where attributes["audit_type"] == "CRED_DISP"
+
+          # Account management
+          - set(attributes["signature"], "User Account Created") where attributes["audit_type"] == "ADD_USER"
+          - set(attributes["signature"], "User Account Deleted") where attributes["audit_type"] == "DEL_USER"
+          - set(attributes["signature"], "User Account Modified") where attributes["audit_type"] == "USER_CHAUTHTOK"
+          - set(attributes["signature"], "Group Added") where attributes["audit_type"] == "ADD_GROUP"
+          - set(attributes["signature"], "Group Deleted") where attributes["audit_type"] == "DEL_GROUP"
+
+          # CIM User fields
+          - set(attributes["user"], attributes["acct"]) where attributes["acct"] != nil
+          - set(attributes["user_id"], attributes["auid"]) where attributes["auid"] != nil
+          - set(attributes["src_user"], attributes["acct"]) where attributes["acct"] != nil
+
+          # CIM Process fields
+          - set(attributes["process"], attributes["comm"]) where attributes["comm"] != nil
+          - set(attributes["process_name"], attributes["comm"]) where attributes["comm"] != nil
+          - set(attributes["process_path"], attributes["exe"]) where attributes["exe"] != nil
+          - set(attributes["process_id"], attributes["pid"]) where attributes["pid"] != nil
+          - set(attributes["parent_process_id"], attributes["ppid"]) where attributes["ppid"] != nil
+
+          # CIM Source fields
+          - set(attributes["src"], attributes["addr"]) where attributes["addr"] != nil
+          - set(attributes["src_ip"], attributes["addr"]) where attributes["addr"] != nil
+
+          # CIM Destination (localhost for most auditd events)
+          - set(attributes["dest"], attributes["hostname"]) where attributes["hostname"] != nil
+
+          # CIM Result
+          - set(attributes["result"], "success") where attributes["res"] == "success"
+          - set(attributes["result"], "failure") where attributes["res"] == "failed"
+
+          # CIM Object fields (for file operations)
+          - set(attributes["object"], attributes["name"]) where attributes["name"] != nil
+          - set(attributes["object_path"], attributes["name"]) where attributes["name"] != nil
+          - set(attributes["file_name"], attributes["name"]) where attributes["name"] != nil
+          - set(attributes["file_path"], attributes["cwd"]) where attributes["cwd"] != nil
+
+          # CIM Tag
+          - set(attributes["tag"], "authentication") where attributes["audit_type"] == "USER_AUTH" or attributes["audit_type"] == "USER_LOGIN"
+          - set(attributes["tag"], "privileged") where attributes["audit_type"] == "USER_CMD"
+          - set(attributes["tag"], "process") where attributes["audit_type"] == "EXECVE" or attributes["audit_type"] == "SYSCALL"
+
+  # Map to Google SecOps UDM fields
+  transform/auditd_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Linux")
+          - set(attributes["metadata.product_name"], "auditd")
+          - set(attributes["metadata.log_type"], "AUDITD")
+
+          # Map audit types to UDM event types
+          - set(attributes["metadata.event_type"], "USER_LOGIN") where attributes["audit_type"] == "USER_LOGIN" or attributes["audit_type"] == "USER_AUTH"
+          - set(attributes["metadata.event_type"], "USER_LOGOUT") where attributes["audit_type"] == "USER_LOGOUT"
+          - set(attributes["metadata.event_type"], "PROCESS_LAUNCH") where attributes["audit_type"] == "EXECVE"
+          - set(attributes["metadata.event_type"], "SYSTEM_AUDIT_LOG_UNCATEGORIZED") where attributes["audit_type"] == "SYSCALL"
+          - set(attributes["metadata.event_type"], "SERVICE_MODIFICATION") where attributes["audit_type"] == "SERVICE_START" or attributes["audit_type"] == "SERVICE_STOP"
+          - set(attributes["metadata.event_type"], "USER_CREATION") where attributes["audit_type"] == "ADD_USER"
+          - set(attributes["metadata.event_type"], "USER_DELETION") where attributes["audit_type"] == "DEL_USER"
+          - set(attributes["metadata.event_type"], "USER_CHANGE_PERMISSIONS") where attributes["audit_type"] == "USER_CHAUTHTOK"
+          - set(attributes["metadata.event_type"], "GROUP_CREATION") where attributes["audit_type"] == "ADD_GROUP"
+          - set(attributes["metadata.event_type"], "GROUP_DELETION") where attributes["audit_type"] == "DEL_GROUP"
+
+          # UDM Principal (source of action - the user/process performing action)
+          - set(attributes["principal.user.userid"], attributes["auid"]) where attributes["auid"] != nil
+          - set(attributes["principal.user.user_display_name"], attributes["acct"]) where attributes["acct"] != nil
+          - set(attributes["principal.hostname"], attributes["hostname"]) where attributes["hostname"] != nil
+          - set(attributes["principal.process.pid"], attributes["pid"]) where attributes["pid"] != nil
+          - set(attributes["principal.process.command_line"], attributes["cmd"]) where attributes["cmd"] != nil
+          - set(attributes["principal.process.file.full_path"], attributes["exe"]) where attributes["exe"] != nil
+          - set(attributes["principal.ip"], attributes["addr"]) where attributes["addr"] != nil
+
+          # UDM Target (object of action)
+          - set(attributes["target.user.userid"], attributes["id"]) where attributes["id"] != nil
+          - set(attributes["target.user.user_display_name"], attributes["acct"]) where attributes["acct"] != nil and (attributes["audit_type"] == "ADD_USER" or attributes["audit_type"] == "DEL_USER")
+          - set(attributes["target.file.full_path"], attributes["name"]) where attributes["name"] != nil
+          - set(attributes["target.hostname"], attributes["hostname"]) where attributes["hostname"] != nil
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["res"] == "success"
+          - set(attributes["security_result.action"], "BLOCK") where attributes["res"] == "failed"
+          - set(attributes["security_result.severity"], "LOW") where attributes["res"] == "success"
+          - set(attributes["security_result.severity"], "MEDIUM") where attributes["res"] == "failed" and attributes["audit_type"] == "USER_AUTH"
+          - set(attributes["security_result.severity"], "HIGH") where attributes["res"] == "failed" and (attributes["audit_type"] == "USER_LOGIN" or attributes["audit_type"] == "USER_CMD")
+          - set(attributes["security_result.summary"], attributes["audit_type"]) where attributes["audit_type"] != nil
+
+          # UDM Network (if applicable)
+          - set(attributes["network.ip_protocol"], "TCP") where attributes["addr"] != nil
+
+  # Handle non-core OS events
+  transform/auditd_unhandled:
+    log_statements:
+      - context: log
+        statements:
+          # Mark events that are not well-known core OS events as unhandled
+          - set(attributes["event.handled"], "true") where attributes["audit_type"] == "USER_AUTH" or attributes["audit_type"] == "USER_LOGIN" or attributes["audit_type"] == "USER_LOGOUT" or attributes["audit_type"] == "EXECVE" or attributes["audit_type"] == "SYSCALL" or attributes["audit_type"] == "SERVICE_START" or attributes["audit_type"] == "SERVICE_STOP" or attributes["audit_type"] == "USER_CMD" or attributes["audit_type"] == "CRED_ACQ" or attributes["audit_type"] == "CRED_DISP" or attributes["audit_type"] == "ADD_USER" or attributes["audit_type"] == "DEL_USER" or attributes["audit_type"] == "USER_CHAUTHTOK" or attributes["audit_type"] == "ADD_GROUP" or attributes["audit_type"] == "DEL_GROUP" or attributes["audit_type"] == "USER_ACCT" or attributes["audit_type"] == "USER_START" or attributes["audit_type"] == "USER_END" or attributes["audit_type"] == "SYSTEM_BOOT" or attributes["audit_type"] == "SYSTEM_SHUTDOWN"
+
+          - set(attributes["event.handled"], "false") where attributes["event.handled"] == nil
+          - set(attributes["event.category"], "unhandled") where attributes["event.handled"] == "false"
+          - set(attributes["signature"], "Unhandled Audit Event") where attributes["event.handled"] == "false"
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to Splunk HEC
+  # splunk_hec:
+  #   token: "your-hec-token"
+  #   endpoint: "https://splunk:8088/services/collector"
+  #   source: "auditd"
+  #   sourcetype: "linux:audit"
+  #   index: "linux"
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog/auditd]
+      processors:
+        - transform/auditd_extract
+        - transform/auditd_cim
+        - transform/auditd_udm
+        - transform/auditd_unhandled
+      exporters: [logging]

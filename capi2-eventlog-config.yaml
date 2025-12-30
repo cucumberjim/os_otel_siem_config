@@ -1,0 +1,356 @@
+# OpenTelemetry Collector Configuration for Windows CAPI2 Event Log
+# This configuration ingests CAPI2 (Cryptographic API 2) operational logs and transforms them to human-readable format
+# CAPI2 logs certificate validation, chain building, and cryptographic operations
+
+receivers:
+  windowseventlog/capi2:
+    channel: Microsoft-Windows-CAPI2/Operational
+    max_reads: 100
+    start_at: end
+    poll_interval: 1s
+    attributes:
+      log.source: "windows.capi2"
+    raw: true  # Get raw XML for full parsing
+
+processors:
+  # Extract and parse EventData XML fields
+  transform/capi2_eventdata:
+    log_statements:
+      - context: log
+        statements:
+          # Extract event record ID
+          - set(attributes["event.record_id"], body["Event"]["System"]["EventRecordID"]) where body["Event"]["System"]["EventRecordID"] != nil
+
+          # Extract provider name
+          - set(attributes["event.provider"], body["Event"]["System"]["Provider"]["@Name"]) where body["Event"]["System"]["Provider"]["@Name"] != nil
+
+          # Extract event ID
+          - set(attributes["event.id"], body["Event"]["System"]["EventID"]) where body["Event"]["System"]["EventID"] != nil
+
+          # Extract event level
+          - set(attributes["event.level"], body["Event"]["System"]["Level"]) where body["Event"]["System"]["Level"] != nil
+
+          # Extract computer name
+          - set(attributes["host.name"], body["Event"]["System"]["Computer"]) where body["Event"]["System"]["Computer"] != nil
+
+          # Extract user SID
+          - set(attributes["user.sid"], body["Event"]["System"]["Security"]["@UserID"]) where body["Event"]["System"]["Security"]["@UserID"] != nil
+
+          # Extract time created
+          - set(attributes["event.created"], body["Event"]["System"]["TimeCreated"]["@SystemTime"]) where body["Event"]["System"]["TimeCreated"]["@SystemTime"] != nil
+
+          # Extract process ID
+          - set(attributes["process.pid"], body["Event"]["System"]["Execution"]["@ProcessID"]) where body["Event"]["System"]["Execution"]["@ProcessID"] != nil
+
+          # Extract thread ID
+          - set(attributes["process.thread_id"], body["Event"]["System"]["Execution"]["@ThreadID"]) where body["Event"]["System"]["Execution"]["@ThreadID"] != nil
+
+  # Transform Event IDs to human-readable descriptions
+  transform/capi2_event_descriptions:
+    log_statements:
+      - context: log
+        statements:
+          # Certificate Chain Building Events (Event IDs 10-100)
+          - set(attributes["event.description"], "Certificate chain build started") where attributes["event.id"] == "10"
+          - set(attributes["event.category"], "Certificate Chain") where attributes["event.id"] == "10"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "10"
+          - set(attributes["event.action"], "chain_build_start") where attributes["event.id"] == "10"
+
+          - set(attributes["event.description"], "Certificate chain built successfully") where attributes["event.id"] == "11"
+          - set(attributes["event.category"], "Certificate Chain") where attributes["event.id"] == "11"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "11"
+          - set(attributes["event.action"], "chain_build_success") where attributes["event.id"] == "11"
+
+          - set(attributes["event.description"], "Certificate chain build failed") where attributes["event.id"] == "12"
+          - set(attributes["event.category"], "Certificate Chain") where attributes["event.id"] == "12"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "12"
+          - set(attributes["event.action"], "chain_build_failed") where attributes["event.id"] == "12"
+
+          - set(attributes["event.description"], "Certificate chain engine found certificate") where attributes["event.id"] == "30"
+          - set(attributes["event.category"], "Certificate Chain") where attributes["event.id"] == "30"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "30"
+
+          - set(attributes["event.description"], "Certificate chain engine searched store") where attributes["event.id"] == "40"
+          - set(attributes["event.category"], "Certificate Chain") where attributes["event.id"] == "40"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "40"
+
+          - set(attributes["event.description"], "Certificate chain path created") where attributes["event.id"] == "50"
+          - set(attributes["event.category"], "Certificate Chain") where attributes["event.id"] == "50"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "50"
+
+          # Certificate Validation Events (Event IDs 70-90)
+          - set(attributes["event.description"], "Certificate trust validation started") where attributes["event.id"] == "70"
+          - set(attributes["event.category"], "Certificate Validation") where attributes["event.id"] == "70"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "70"
+          - set(attributes["event.action"], "validation_start") where attributes["event.id"] == "70"
+
+          - set(attributes["event.description"], "Certificate trust validation completed") where attributes["event.id"] == "71"
+          - set(attributes["event.category"], "Certificate Validation") where attributes["event.id"] == "71"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "71"
+          - set(attributes["event.action"], "validation_complete") where attributes["event.id"] == "71"
+
+          - set(attributes["event.description"], "Certificate revocation check started") where attributes["event.id"] == "80"
+          - set(attributes["event.category"], "Certificate Revocation") where attributes["event.id"] == "80"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "80"
+          - set(attributes["event.action"], "revocation_check_start") where attributes["event.id"] == "80"
+
+          - set(attributes["event.description"], "Certificate revocation check completed") where attributes["event.id"] == "81"
+          - set(attributes["event.category"], "Certificate Revocation") where attributes["event.id"] == "81"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "81"
+          - set(attributes["event.action"], "revocation_check_complete") where attributes["event.id"] == "81"
+
+          - set(attributes["event.description"], "Certificate revocation information retrieved") where attributes["event.id"] == "90"
+          - set(attributes["event.category"], "Certificate Revocation") where attributes["event.id"] == "90"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "90"
+
+          # Certificate Store Events (Event IDs 100-150)
+          - set(attributes["event.description"], "Certificate added to store") where attributes["event.id"] == "100"
+          - set(attributes["event.category"], "Certificate Store") where attributes["event.id"] == "100"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "100"
+          - set(attributes["event.action"], "cert_added") where attributes["event.id"] == "100"
+
+          - set(attributes["event.description"], "Certificate removed from store") where attributes["event.id"] == "101"
+          - set(attributes["event.category"], "Certificate Store") where attributes["event.id"] == "101"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "101"
+          - set(attributes["event.action"], "cert_removed") where attributes["event.id"] == "101"
+
+          - set(attributes["event.description"], "Certificate store opened") where attributes["event.id"] == "110"
+          - set(attributes["event.category"], "Certificate Store") where attributes["event.id"] == "110"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "110"
+
+          - set(attributes["event.description"], "Certificate store closed") where attributes["event.id"] == "111"
+          - set(attributes["event.category"], "Certificate Store") where attributes["event.id"] == "111"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "111"
+
+          # CRL (Certificate Revocation List) Events (Event IDs 200-250)
+          - set(attributes["event.description"], "CRL retrieval started") where attributes["event.id"] == "200"
+          - set(attributes["event.category"], "CRL") where attributes["event.id"] == "200"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "200"
+          - set(attributes["event.action"], "crl_retrieval_start") where attributes["event.id"] == "200"
+
+          - set(attributes["event.description"], "CRL retrieved successfully") where attributes["event.id"] == "201"
+          - set(attributes["event.category"], "CRL") where attributes["event.id"] == "201"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "201"
+          - set(attributes["event.action"], "crl_retrieval_success") where attributes["event.id"] == "201"
+
+          - set(attributes["event.description"], "CRL retrieval failed") where attributes["event.id"] == "202"
+          - set(attributes["event.category"], "CRL") where attributes["event.id"] == "202"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "202"
+          - set(attributes["event.action"], "crl_retrieval_failed") where attributes["event.id"] == "202"
+
+          # OCSP (Online Certificate Status Protocol) Events (Event IDs 300-350)
+          - set(attributes["event.description"], "OCSP request started") where attributes["event.id"] == "300"
+          - set(attributes["event.category"], "OCSP") where attributes["event.id"] == "300"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "300"
+          - set(attributes["event.action"], "ocsp_request_start") where attributes["event.id"] == "300"
+
+          - set(attributes["event.description"], "OCSP response received") where attributes["event.id"] == "301"
+          - set(attributes["event.category"], "OCSP") where attributes["event.id"] == "301"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "301"
+          - set(attributes["event.action"], "ocsp_response_received") where attributes["event.id"] == "301"
+
+          - set(attributes["event.description"], "OCSP request failed") where attributes["event.id"] == "302"
+          - set(attributes["event.category"], "OCSP") where attributes["event.id"] == "302"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "302"
+          - set(attributes["event.action"], "ocsp_request_failed") where attributes["event.id"] == "302"
+
+          # Cryptographic Provider Events (Event IDs 500-550)
+          - set(attributes["event.description"], "Cryptographic provider loaded") where attributes["event.id"] == "500"
+          - set(attributes["event.category"], "Crypto Provider") where attributes["event.id"] == "500"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "500"
+
+          - set(attributes["event.description"], "Cryptographic operation started") where attributes["event.id"] == "501"
+          - set(attributes["event.category"], "Crypto Provider") where attributes["event.id"] == "501"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "501"
+
+          - set(attributes["event.description"], "Cryptographic operation completed") where attributes["event.id"] == "502"
+          - set(attributes["event.category"], "Crypto Provider") where attributes["event.id"] == "502"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "502"
+
+          - set(attributes["event.description"], "Cryptographic operation failed") where attributes["event.id"] == "503"
+          - set(attributes["event.category"], "Crypto Provider") where attributes["event.id"] == "503"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "503"
+
+          # X.509 Certificate Events (Event IDs 600-650)
+          - set(attributes["event.description"], "X.509 certificate decoded") where attributes["event.id"] == "600"
+          - set(attributes["event.category"], "X.509") where attributes["event.id"] == "600"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "600"
+
+          - set(attributes["event.description"], "X.509 certificate signature verified") where attributes["event.id"] == "601"
+          - set(attributes["event.category"], "X.509") where attributes["event.id"] == "601"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "601"
+
+          - set(attributes["event.description"], "X.509 certificate signature verification failed") where attributes["event.id"] == "602"
+          - set(attributes["event.category"], "X.509") where attributes["event.id"] == "602"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "602"
+
+          - set(attributes["event.description"], "X.509 certificate name constraint violation") where attributes["event.id"] == "603"
+          - set(attributes["event.category"], "X.509") where attributes["event.id"] == "603"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "603"
+
+          - set(attributes["event.description"], "X.509 certificate expired") where attributes["event.id"] == "604"
+          - set(attributes["event.category"], "X.509") where attributes["event.id"] == "604"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "604"
+
+          - set(attributes["event.description"], "X.509 certificate not yet valid") where attributes["event.id"] == "605"
+          - set(attributes["event.category"], "X.509") where attributes["event.id"] == "605"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "605"
+
+          # Network Retrieval Events (Event IDs 1000-1100)
+          - set(attributes["event.description"], "Network retrieval of certificate or CRL started") where attributes["event.id"] == "1000"
+          - set(attributes["event.category"], "Network Retrieval") where attributes["event.id"] == "1000"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1000"
+
+          - set(attributes["event.description"], "Network retrieval of certificate or CRL completed") where attributes["event.id"] == "1001"
+          - set(attributes["event.category"], "Network Retrieval") where attributes["event.id"] == "1001"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1001"
+
+          - set(attributes["event.description"], "Network retrieval of certificate or CRL failed") where attributes["event.id"] == "1002"
+          - set(attributes["event.category"], "Network Retrieval") where attributes["event.id"] == "1002"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "1002"
+
+          # Cache Events (Event IDs 1100-1150)
+          - set(attributes["event.description"], "Certificate or CRL retrieved from cache") where attributes["event.id"] == "1100"
+          - set(attributes["event.category"], "Cache") where attributes["event.id"] == "1100"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1100"
+
+          - set(attributes["event.description"], "Certificate or CRL added to cache") where attributes["event.id"] == "1101"
+          - set(attributes["event.category"], "Cache") where attributes["event.id"] == "1101"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1101"
+
+          - set(attributes["event.description"], "Certificate or CRL removed from cache") where attributes["event.id"] == "1102"
+          - set(attributes["event.category"], "Cache") where attributes["event.id"] == "1102"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "1102"
+
+          # Error Events (Event IDs 5000+)
+          - set(attributes["event.description"], "CAPI2 error occurred") where attributes["event.id"] == "5000"
+          - set(attributes["event.category"], "CAPI2 Error") where attributes["event.id"] == "5000"
+          - set(attributes["event.severity"], "error") where attributes["event.id"] == "5000"
+
+          # Default for unknown events
+          - set(attributes["event.description"], "CAPI2 cryptographic event") where attributes["event.description"] == nil
+          - set(attributes["event.category"], "CAPI2") where attributes["event.category"] == nil
+
+  # Parse EventData fields
+  transform/capi2_eventdata_fields:
+    log_statements:
+      - context: log
+        statements:
+          # Extract certificate information
+          - set(attributes["cert.subject"], body["Event"]["EventData"]["SubjectName"]) where body["Event"]["EventData"]["SubjectName"] != nil
+          - set(attributes["cert.issuer"], body["Event"]["EventData"]["IssuerName"]) where body["Event"]["EventData"]["IssuerName"] != nil
+          - set(attributes["cert.serial_number"], body["Event"]["EventData"]["SerialNumber"]) where body["Event"]["EventData"]["SerialNumber"] != nil
+          - set(attributes["cert.thumbprint"], body["Event"]["EventData"]["Thumbprint"]) where body["Event"]["EventData"]["Thumbprint"] != nil
+
+          # Extract certificate validity dates
+          - set(attributes["cert.not_before"], body["Event"]["EventData"]["NotBefore"]) where body["Event"]["EventData"]["NotBefore"] != nil
+          - set(attributes["cert.not_after"], body["Event"]["EventData"]["NotAfter"]) where body["Event"]["EventData"]["NotAfter"] != nil
+
+          # Extract chain information
+          - set(attributes["cert.chain_length"], body["Event"]["EventData"]["ChainLength"]) where body["Event"]["EventData"]["ChainLength"] != nil
+          - set(attributes["cert.chain_element_count"], body["Event"]["EventData"]["ElementCount"]) where body["Event"]["EventData"]["ElementCount"] != nil
+
+          # Extract error information
+          - set(attributes["error.code"], body["Event"]["EventData"]["ErrorCode"]) where body["Event"]["EventData"]["ErrorCode"] != nil
+          - set(attributes["error.status"], body["Event"]["EventData"]["Status"]) where body["Event"]["EventData"]["Status"] != nil
+          - set(attributes["error.message"], body["Event"]["EventData"]["ErrorMessage"]) where body["Event"]["EventData"]["ErrorMessage"] != nil
+
+          # Extract store information
+          - set(attributes["cert.store_name"], body["Event"]["EventData"]["StoreName"]) where body["Event"]["EventData"]["StoreName"] != nil
+          - set(attributes["cert.store_location"], body["Event"]["EventData"]["StoreLocation"]) where body["Event"]["EventData"]["StoreLocation"] != nil
+
+          # Extract revocation information
+          - set(attributes["cert.revocation_reason"], body["Event"]["EventData"]["RevocationReason"]) where body["Event"]["EventData"]["RevocationReason"] != nil
+          - set(attributes["cert.revocation_date"], body["Event"]["EventData"]["RevocationDate"]) where body["Event"]["EventData"]["RevocationDate"] != nil
+
+          # Extract URL information for CRL/OCSP
+          - set(attributes["crl.url"], body["Event"]["EventData"]["URL"]) where body["Event"]["EventData"]["URL"] != nil
+          - set(attributes["crl.distribution_point"], body["Event"]["EventData"]["DistributionPoint"]) where body["Event"]["EventData"]["DistributionPoint"] != nil
+
+          # Extract OCSP information
+          - set(attributes["ocsp.responder_url"], body["Event"]["EventData"]["ResponderURL"]) where body["Event"]["EventData"]["ResponderURL"] != nil
+          - set(attributes["ocsp.response_status"], body["Event"]["EventData"]["ResponseStatus"]) where body["Event"]["EventData"]["ResponseStatus"] != nil
+
+          # Extract cryptographic algorithm information
+          - set(attributes["crypto.algorithm"], body["Event"]["EventData"]["Algorithm"]) where body["Event"]["EventData"]["Algorithm"] != nil
+          - set(attributes["crypto.key_length"], body["Event"]["EventData"]["KeyLength"]) where body["Event"]["EventData"]["KeyLength"] != nil
+          - set(attributes["crypto.hash_algorithm"], body["Event"]["EventData"]["HashAlgorithm"]) where body["Event"]["EventData"]["HashAlgorithm"] != nil
+
+          # Extract process information
+          - set(attributes["process.name"], body["Event"]["EventData"]["ProcessName"]) where body["Event"]["EventData"]["ProcessName"] != nil
+          - set(attributes["process.path"], body["Event"]["EventData"]["ProcessPath"]) where body["Event"]["EventData"]["ProcessPath"] != nil
+
+          # Extract certificate usage information
+          - set(attributes["cert.usage"], body["Event"]["EventData"]["Usage"]) where body["Event"]["EventData"]["Usage"] != nil
+          - set(attributes["cert.enhanced_key_usage"], body["Event"]["EventData"]["EnhancedKeyUsage"]) where body["Event"]["EventData"]["EnhancedKeyUsage"] != nil
+
+          # Extract cache information
+          - set(attributes["cache.hit"], body["Event"]["EventData"]["CacheHit"]) where body["Event"]["EventData"]["CacheHit"] != nil
+          - set(attributes["cache.type"], body["Event"]["EventData"]["CacheType"]) where body["Event"]["EventData"]["CacheType"] != nil
+
+          # Extract network retrieval information
+          - set(attributes["network.timeout"], body["Event"]["EventData"]["Timeout"]) where body["Event"]["EventData"]["Timeout"] != nil
+          - set(attributes["network.retry_count"], body["Event"]["EventData"]["RetryCount"]) where body["Event"]["EventData"]["RetryCount"] != nil
+
+  # Map to Splunk CIM fields
+  transform/capi2_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Microsoft Windows")
+          - set(attributes["vendor"], "Microsoft")
+          - set(attributes["product"], "Windows")
+          # CIM Destination
+          - set(attributes["dest"], attributes["host.name"]) where attributes["host.name"] != nil
+          # CIM Signature
+          - set(attributes["signature"], attributes["event.description"]) where attributes["event.description"] != nil
+          - set(attributes["signature_id"], attributes["event.id"]) where attributes["event.id"] != nil
+          # CIM Action
+          - set(attributes["action"], attributes["event.action"]) where attributes["event.action"] != nil
+          # CIM App
+          - set(attributes["app"], attributes["event.provider"]) where attributes["event.provider"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/capi2_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Microsoft")
+          - set(attributes["metadata.product_name"], "Windows")
+          - set(attributes["metadata.log_type"], "WINEVTLOG")
+          # UDM Principal
+          - set(attributes["principal.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Target
+          - set(attributes["target.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          # UDM Security Result
+          - set(attributes["security_result.summary"], attributes["event.description"]) where attributes["event.description"] != nil
+
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to file
+  # file:
+  #   path: ./capi2-events.json
+
+service:
+  pipelines:
+    logs:
+      receivers: [windowseventlog/capi2]
+      processors:
+        - transform/capi2_eventdata
+        - transform/capi2_event_descriptions
+        - transform/capi2_eventdata_fields
+        - transform/capi2_cim
+        - transform/capi2_udm
+      exporters: [logging]

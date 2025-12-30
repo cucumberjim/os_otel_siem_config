@@ -1,0 +1,551 @@
+# OpenTelemetry Collector Configuration for Windows Security Event Log
+# This configuration ingests Security event logs and transforms them to human-readable format
+# Security events are critical for auditing authentication, authorization, and security-related activities
+
+receivers:
+  windowseventlog/security:
+    channel: Security
+    max_reads: 100
+    start_at: end
+    poll_interval: 1s
+    attributes:
+      log.source: "windows.security"
+    raw: true  # Get raw XML for full parsing
+
+processors:
+  # Extract and parse EventData XML fields
+  transform/security_eventdata:
+    log_statements:
+      - context: log
+        statements:
+          # Extract event record ID
+          - set(attributes["event.record_id"], body["Event"]["System"]["EventRecordID"]) where body["Event"]["System"]["EventRecordID"] != nil
+
+          # Extract provider name
+          - set(attributes["event.provider"], body["Event"]["System"]["Provider"]["@Name"]) where body["Event"]["System"]["Provider"]["@Name"] != nil
+
+          # Extract event ID
+          - set(attributes["event.id"], body["Event"]["System"]["EventID"]) where body["Event"]["System"]["EventID"] != nil
+
+          # Extract event level
+          - set(attributes["event.level"], body["Event"]["System"]["Level"]) where body["Event"]["System"]["Level"] != nil
+
+          # Extract computer name
+          - set(attributes["host.name"], body["Event"]["System"]["Computer"]) where body["Event"]["System"]["Computer"] != nil
+
+          # Extract user SID
+          - set(attributes["user.sid"], body["Event"]["System"]["Security"]["@UserID"]) where body["Event"]["System"]["Security"]["@UserID"] != nil
+
+          # Extract time created
+          - set(attributes["event.created"], body["Event"]["System"]["TimeCreated"]["@SystemTime"]) where body["Event"]["System"]["TimeCreated"]["@SystemTime"] != nil
+
+          # Extract process ID
+          - set(attributes["process.pid"], body["Event"]["System"]["Execution"]["@ProcessID"]) where body["Event"]["System"]["Execution"]["@ProcessID"] != nil
+
+          # Extract thread ID
+          - set(attributes["process.thread_id"], body["Event"]["System"]["Execution"]["@ThreadID"]) where body["Event"]["System"]["Execution"]["@ThreadID"] != nil
+
+          # Extract keywords for audit success/failure
+          - set(attributes["event.keywords"], body["Event"]["System"]["Keywords"]) where body["Event"]["System"]["Keywords"] != nil
+
+  # Transform Event IDs to human-readable descriptions
+  transform/security_event_descriptions:
+    log_statements:
+      - context: log
+        statements:
+          # Logon Events (4624-4625)
+          - set(attributes["event.description"], "Successful account logon") where attributes["event.id"] == "4624"
+          - set(attributes["event.category"], "Logon") where attributes["event.id"] == "4624"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4624"
+          - set(attributes["event.action"], "logon_success") where attributes["event.id"] == "4624"
+
+          - set(attributes["event.description"], "Failed account logon") where attributes["event.id"] == "4625"
+          - set(attributes["event.category"], "Logon") where attributes["event.id"] == "4625"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4625"
+          - set(attributes["event.action"], "logon_failed") where attributes["event.id"] == "4625"
+
+          # Logoff Events (4634, 4647)
+          - set(attributes["event.description"], "Account logoff") where attributes["event.id"] == "4634"
+          - set(attributes["event.category"], "Logon") where attributes["event.id"] == "4634"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4634"
+          - set(attributes["event.action"], "logoff") where attributes["event.id"] == "4634"
+
+          - set(attributes["event.description"], "User initiated logoff") where attributes["event.id"] == "4647"
+          - set(attributes["event.category"], "Logon") where attributes["event.id"] == "4647"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4647"
+          - set(attributes["event.action"], "logoff") where attributes["event.id"] == "4647"
+
+          # Special Logon Events (4648, 4672)
+          - set(attributes["event.description"], "Logon using explicit credentials") where attributes["event.id"] == "4648"
+          - set(attributes["event.category"], "Logon") where attributes["event.id"] == "4648"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4648"
+          - set(attributes["event.action"], "explicit_logon") where attributes["event.id"] == "4648"
+
+          - set(attributes["event.description"], "Special privileges assigned to new logon") where attributes["event.id"] == "4672"
+          - set(attributes["event.category"], "Privilege Use") where attributes["event.id"] == "4672"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4672"
+          - set(attributes["event.action"], "privilege_assigned") where attributes["event.id"] == "4672"
+
+          # Account Management Events (4720-4726, 4738-4741, 4767)
+          - set(attributes["event.description"], "User account created") where attributes["event.id"] == "4720"
+          - set(attributes["event.category"], "Account Management") where attributes["event.id"] == "4720"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4720"
+          - set(attributes["event.action"], "user_created") where attributes["event.id"] == "4720"
+
+          - set(attributes["event.description"], "User account enabled") where attributes["event.id"] == "4722"
+          - set(attributes["event.category"], "Account Management") where attributes["event.id"] == "4722"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4722"
+          - set(attributes["event.action"], "user_enabled") where attributes["event.id"] == "4722"
+
+          - set(attributes["event.description"], "User account password changed") where attributes["event.id"] == "4723"
+          - set(attributes["event.category"], "Account Management") where attributes["event.id"] == "4723"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4723"
+          - set(attributes["event.action"], "password_changed") where attributes["event.id"] == "4723"
+
+          - set(attributes["event.description"], "User account password reset") where attributes["event.id"] == "4724"
+          - set(attributes["event.category"], "Account Management") where attributes["event.id"] == "4724"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4724"
+          - set(attributes["event.action"], "password_reset") where attributes["event.id"] == "4724"
+
+          - set(attributes["event.description"], "User account disabled") where attributes["event.id"] == "4725"
+          - set(attributes["event.category"], "Account Management") where attributes["event.id"] == "4725"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4725"
+          - set(attributes["event.action"], "user_disabled") where attributes["event.id"] == "4725"
+
+          - set(attributes["event.description"], "User account deleted") where attributes["event.id"] == "4726"
+          - set(attributes["event.category"], "Account Management") where attributes["event.id"] == "4726"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4726"
+          - set(attributes["event.action"], "user_deleted") where attributes["event.id"] == "4726"
+
+          - set(attributes["event.description"], "User account changed") where attributes["event.id"] == "4738"
+          - set(attributes["event.category"], "Account Management") where attributes["event.id"] == "4738"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4738"
+          - set(attributes["event.action"], "user_changed") where attributes["event.id"] == "4738"
+
+          - set(attributes["event.description"], "Computer account created") where attributes["event.id"] == "4741"
+          - set(attributes["event.category"], "Account Management") where attributes["event.id"] == "4741"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4741"
+          - set(attributes["event.action"], "computer_created") where attributes["event.id"] == "4741"
+
+          - set(attributes["event.description"], "User account unlocked") where attributes["event.id"] == "4767"
+          - set(attributes["event.category"], "Account Management") where attributes["event.id"] == "4767"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4767"
+          - set(attributes["event.action"], "user_unlocked") where attributes["event.id"] == "4767"
+
+          # Group Management Events (4727-4735, 4737, 4754-4758, 4764-4765)
+          - set(attributes["event.description"], "Security-enabled global group created") where attributes["event.id"] == "4727"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4727"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4727"
+
+          - set(attributes["event.description"], "Member added to security-enabled global group") where attributes["event.id"] == "4728"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4728"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4728"
+
+          - set(attributes["event.description"], "Member removed from security-enabled global group") where attributes["event.id"] == "4729"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4729"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4729"
+
+          - set(attributes["event.description"], "Security-enabled global group deleted") where attributes["event.id"] == "4730"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4730"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4730"
+
+          - set(attributes["event.description"], "Security-enabled local group created") where attributes["event.id"] == "4731"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4731"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4731"
+
+          - set(attributes["event.description"], "Member added to security-enabled local group") where attributes["event.id"] == "4732"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4732"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4732"
+
+          - set(attributes["event.description"], "Member removed from security-enabled local group") where attributes["event.id"] == "4733"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4733"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4733"
+
+          - set(attributes["event.description"], "Security-enabled local group deleted") where attributes["event.id"] == "4734"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4734"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4734"
+
+          - set(attributes["event.description"], "Security-enabled local group changed") where attributes["event.id"] == "4735"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4735"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4735"
+
+          - set(attributes["event.description"], "Security-enabled global group changed") where attributes["event.id"] == "4737"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4737"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4737"
+
+          - set(attributes["event.description"], "Security-enabled universal group created") where attributes["event.id"] == "4754"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4754"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4754"
+
+          - set(attributes["event.description"], "Security-enabled universal group changed") where attributes["event.id"] == "4755"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4755"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4755"
+
+          - set(attributes["event.description"], "Member added to security-enabled universal group") where attributes["event.id"] == "4756"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4756"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4756"
+
+          - set(attributes["event.description"], "Member removed from security-enabled universal group") where attributes["event.id"] == "4757"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4757"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4757"
+
+          - set(attributes["event.description"], "Security-enabled universal group deleted") where attributes["event.id"] == "4758"
+          - set(attributes["event.category"], "Group Management") where attributes["event.id"] == "4758"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4758"
+
+          # Object Access Events (4656-4663, 4670, 4985, 5140-5145)
+          - set(attributes["event.description"], "Handle to object requested") where attributes["event.id"] == "4656"
+          - set(attributes["event.category"], "Object Access") where attributes["event.id"] == "4656"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4656"
+
+          - set(attributes["event.description"], "Registry value modified") where attributes["event.id"] == "4657"
+          - set(attributes["event.category"], "Object Access") where attributes["event.id"] == "4657"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4657"
+
+          - set(attributes["event.description"], "Object access auditing enabled") where attributes["event.id"] == "4658"
+          - set(attributes["event.category"], "Object Access") where attributes["event.id"] == "4658"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4658"
+
+          - set(attributes["event.description"], "Object deleted") where attributes["event.id"] == "4660"
+          - set(attributes["event.category"], "Object Access") where attributes["event.id"] == "4660"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4660"
+
+          - set(attributes["event.description"], "Object handle closed") where attributes["event.id"] == "4658"
+          - set(attributes["event.category"], "Object Access") where attributes["event.id"] == "4658"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4658"
+
+          - set(attributes["event.description"], "Object permissions changed") where attributes["event.id"] == "4670"
+          - set(attributes["event.category"], "Object Access") where attributes["event.id"] == "4670"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4670"
+
+          - set(attributes["event.description"], "Network share accessed") where attributes["event.id"] == "5140"
+          - set(attributes["event.category"], "File Share") where attributes["event.id"] == "5140"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "5140"
+
+          - set(attributes["event.description"], "Network share object checked for access") where attributes["event.id"] == "5145"
+          - set(attributes["event.category"], "File Share") where attributes["event.id"] == "5145"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "5145"
+
+          # Policy Change Events (4704-4719, 4739, 4864-4867)
+          - set(attributes["event.description"], "User right assigned") where attributes["event.id"] == "4704"
+          - set(attributes["event.category"], "Policy Change") where attributes["event.id"] == "4704"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4704"
+
+          - set(attributes["event.description"], "User right removed") where attributes["event.id"] == "4705"
+          - set(attributes["event.category"], "Policy Change") where attributes["event.id"] == "4705"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4705"
+
+          - set(attributes["event.description"], "Audit policy changed") where attributes["event.id"] == "4719"
+          - set(attributes["event.category"], "Policy Change") where attributes["event.id"] == "4719"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4719"
+
+          - set(attributes["event.description"], "User account password policy checked") where attributes["event.id"] == "4739"
+          - set(attributes["event.category"], "Policy Change") where attributes["event.id"] == "4739"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4739"
+
+          # Process Tracking Events (4688-4689, 4696-4697)
+          - set(attributes["event.description"], "New process created") where attributes["event.id"] == "4688"
+          - set(attributes["event.category"], "Process Tracking") where attributes["event.id"] == "4688"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4688"
+          - set(attributes["event.action"], "process_created") where attributes["event.id"] == "4688"
+
+          - set(attributes["event.description"], "Process exited") where attributes["event.id"] == "4689"
+          - set(attributes["event.category"], "Process Tracking") where attributes["event.id"] == "4689"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4689"
+          - set(attributes["event.action"], "process_exited") where attributes["event.id"] == "4689"
+
+          - set(attributes["event.description"], "Primary token assigned to process") where attributes["event.id"] == "4696"
+          - set(attributes["event.category"], "Process Tracking") where attributes["event.id"] == "4696"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4696"
+
+          # Authentication Events (4768-4776)
+          - set(attributes["event.description"], "Kerberos TGT requested") where attributes["event.id"] == "4768"
+          - set(attributes["event.category"], "Authentication") where attributes["event.id"] == "4768"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4768"
+
+          - set(attributes["event.description"], "Kerberos service ticket requested") where attributes["event.id"] == "4769"
+          - set(attributes["event.category"], "Authentication") where attributes["event.id"] == "4769"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4769"
+
+          - set(attributes["event.description"], "Kerberos service ticket renewed") where attributes["event.id"] == "4770"
+          - set(attributes["event.category"], "Authentication") where attributes["event.id"] == "4770"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4770"
+
+          - set(attributes["event.description"], "Kerberos pre-authentication failed") where attributes["event.id"] == "4771"
+          - set(attributes["event.category"], "Authentication") where attributes["event.id"] == "4771"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4771"
+
+          - set(attributes["event.description"], "Kerberos ticket request failed") where attributes["event.id"] == "4772"
+          - set(attributes["event.category"], "Authentication") where attributes["event.id"] == "4772"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4772"
+
+          - set(attributes["event.description"], "NTLM authentication failed") where attributes["event.id"] == "4776"
+          - set(attributes["event.category"], "Authentication") where attributes["event.id"] == "4776"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4776"
+
+          # Account Lockout Events (4740)
+          - set(attributes["event.description"], "User account locked out") where attributes["event.id"] == "4740"
+          - set(attributes["event.category"], "Account Lockout") where attributes["event.id"] == "4740"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4740"
+          - set(attributes["event.action"], "account_locked") where attributes["event.id"] == "4740"
+
+          # Security System Events (4608, 4616, 4697, 4698-4702)
+          - set(attributes["event.description"], "Windows starting up") where attributes["event.id"] == "4608"
+          - set(attributes["event.category"], "System") where attributes["event.id"] == "4608"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4608"
+
+          - set(attributes["event.description"], "System time changed") where attributes["event.id"] == "4616"
+          - set(attributes["event.category"], "System") where attributes["event.id"] == "4616"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4616"
+
+          - set(attributes["event.description"], "Service installed on system") where attributes["event.id"] == "4697"
+          - set(attributes["event.category"], "System") where attributes["event.id"] == "4697"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4697"
+          - set(attributes["event.action"], "service_installed") where attributes["event.id"] == "4697"
+
+          - set(attributes["event.description"], "Scheduled task created") where attributes["event.id"] == "4698"
+          - set(attributes["event.category"], "Task Scheduler") where attributes["event.id"] == "4698"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4698"
+
+          - set(attributes["event.description"], "Scheduled task deleted") where attributes["event.id"] == "4699"
+          - set(attributes["event.category"], "Task Scheduler") where attributes["event.id"] == "4699"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4699"
+
+          - set(attributes["event.description"], "Scheduled task enabled") where attributes["event.id"] == "4700"
+          - set(attributes["event.category"], "Task Scheduler") where attributes["event.id"] == "4700"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4700"
+
+          - set(attributes["event.description"], "Scheduled task disabled") where attributes["event.id"] == "4701"
+          - set(attributes["event.category"], "Task Scheduler") where attributes["event.id"] == "4701"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4701"
+
+          - set(attributes["event.description"], "Scheduled task updated") where attributes["event.id"] == "4702"
+          - set(attributes["event.category"], "Task Scheduler") where attributes["event.id"] == "4702"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4702"
+
+          # Sensitive Privilege Use Events (4673, 4674)
+          - set(attributes["event.description"], "Sensitive privilege used") where attributes["event.id"] == "4673"
+          - set(attributes["event.category"], "Privilege Use") where attributes["event.id"] == "4673"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "4673"
+
+          - set(attributes["event.description"], "Operation attempted on privileged object") where attributes["event.id"] == "4674"
+          - set(attributes["event.category"], "Privilege Use") where attributes["event.id"] == "4674"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4674"
+
+          # Filtering Platform Connection Events (5156-5158)
+          - set(attributes["event.description"], "Windows Filtering Platform permitted connection") where attributes["event.id"] == "5156"
+          - set(attributes["event.category"], "Firewall") where attributes["event.id"] == "5156"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "5156"
+
+          - set(attributes["event.description"], "Windows Filtering Platform blocked connection") where attributes["event.id"] == "5157"
+          - set(attributes["event.category"], "Firewall") where attributes["event.id"] == "5157"
+          - set(attributes["event.severity"], "warning") where attributes["event.id"] == "5157"
+
+          - set(attributes["event.description"], "Windows Filtering Platform permitted bind") where attributes["event.id"] == "5158"
+          - set(attributes["event.category"], "Firewall") where attributes["event.id"] == "5158"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "5158"
+
+          # Certificate Services Events (4868-4870)
+          - set(attributes["event.description"], "Certificate Services received certificate request") where attributes["event.id"] == "4868"
+          - set(attributes["event.category"], "Certificate Services") where attributes["event.id"] == "4868"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4868"
+
+          - set(attributes["event.description"], "Certificate Services approved certificate request") where attributes["event.id"] == "4870"
+          - set(attributes["event.category"], "Certificate Services") where attributes["event.id"] == "4870"
+          - set(attributes["event.severity"], "info") where attributes["event.id"] == "4870"
+
+          # Default for unknown events
+          - set(attributes["event.description"], "Security event") where attributes["event.description"] == nil
+          - set(attributes["event.category"], "Security") where attributes["event.category"] == nil
+
+  # Parse EventData fields - Security events have extensive structured data
+  transform/security_eventdata_fields:
+    log_statements:
+      - context: log
+        statements:
+          # Logon events - extract subject and target account info
+          - set(attributes["subject.user_name"], body["Event"]["EventData"]["Data"][1]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][1]["@Name"] == "SubjectUserName"
+          - set(attributes["subject.domain_name"], body["Event"]["EventData"]["Data"][2]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][2]["@Name"] == "SubjectDomainName"
+          - set(attributes["subject.user_sid"], body["Event"]["EventData"]["Data"][0]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][0]["@Name"] == "SubjectUserSid"
+          - set(attributes["subject.logon_id"], body["Event"]["EventData"]["Data"][3]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][3]["@Name"] == "SubjectLogonId"
+
+          - set(attributes["target.user_name"], body["Event"]["EventData"]["Data"][5]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][5]["@Name"] == "TargetUserName"
+          - set(attributes["target.domain_name"], body["Event"]["EventData"]["Data"][6]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][6]["@Name"] == "TargetDomainName"
+          - set(attributes["target.user_sid"], body["Event"]["EventData"]["Data"][4]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][4]["@Name"] == "TargetUserSid"
+          - set(attributes["target.logon_id"], body["Event"]["EventData"]["Data"][7]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][7]["@Name"] == "TargetLogonId"
+
+          # Logon type
+          - set(attributes["logon.type"], body["Event"]["EventData"]["Data"][8]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][8]["@Name"] == "LogonType"
+
+          # Logon process and authentication package
+          - set(attributes["logon.process"], body["Event"]["EventData"]["Data"][9]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][9]["@Name"] == "LogonProcessName"
+          - set(attributes["authentication.package"], body["Event"]["EventData"]["Data"][10]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][10]["@Name"] == "AuthenticationPackageName"
+
+          # Workstation and source network address
+          - set(attributes["workstation.name"], body["Event"]["EventData"]["Data"][11]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][11]["@Name"] == "WorkstationName"
+          - set(attributes["source.ip"], body["Event"]["EventData"]["Data"][18]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][18]["@Name"] == "IpAddress"
+          - set(attributes["source.port"], body["Event"]["EventData"]["Data"][19]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][19]["@Name"] == "IpPort"
+
+          # Failed logon status and sub-status
+          - set(attributes["logon.status"], body["Event"]["EventData"]["Data"][7]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][7]["@Name"] == "Status"
+          - set(attributes["logon.sub_status"], body["Event"]["EventData"]["Data"][9]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][9]["@Name"] == "SubStatus"
+          - set(attributes["logon.failure_reason"], body["Event"]["EventData"]["Data"][10]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][10]["@Name"] == "FailureReason"
+
+          # Process creation - extract process info
+          - set(attributes["process.name"], body["Event"]["EventData"]["Data"][5]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][5]["@Name"] == "NewProcessName"
+          - set(attributes["process.command_line"], body["Event"]["EventData"]["Data"][8]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][8]["@Name"] == "CommandLine"
+          - set(attributes["parent.process.name"], body["Event"]["EventData"]["Data"][13]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][13]["@Name"] == "ParentProcessName"
+          - set(attributes["process.id"], body["Event"]["EventData"]["Data"][4]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][4]["@Name"] == "NewProcessId"
+
+          # Service installation
+          - set(attributes["service.name"], body["Event"]["EventData"]["Data"][0]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][0]["@Name"] == "ServiceName"
+          - set(attributes["service.file_name"], body["Event"]["EventData"]["Data"][1]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][1]["@Name"] == "ServiceFileName"
+          - set(attributes["service.type"], body["Event"]["EventData"]["Data"][2]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][2]["@Name"] == "ServiceType"
+          - set(attributes["service.start_type"], body["Event"]["EventData"]["Data"][3]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][3]["@Name"] == "ServiceStartType"
+
+          # Object access
+          - set(attributes["object.type"], body["Event"]["EventData"]["Data"][6]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][6]["@Name"] == "ObjectType"
+          - set(attributes["object.name"], body["Event"]["EventData"]["Data"][5]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][5]["@Name"] == "ObjectName"
+          - set(attributes["object.server"], body["Event"]["EventData"]["Data"][4]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][4]["@Name"] == "ObjectServer"
+          - set(attributes["access.mask"], body["Event"]["EventData"]["Data"][8]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][8]["@Name"] == "AccessMask"
+
+          # Share access
+          - set(attributes["share.name"], body["Event"]["EventData"]["Data"][3]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][3]["@Name"] == "ShareName"
+          - set(attributes["share.path"], body["Event"]["EventData"]["Data"][4]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][4]["@Name"] == "ShareLocalPath"
+          - set(attributes["relative.target_name"], body["Event"]["EventData"]["Data"][8]["#text"]) where is_list(body["Event"]["EventData"]["Data"]) and body["Event"]["EventData"]["Data"][8]["@Name"] == "RelativeTargetName"
+
+  # Map to Splunk CIM fields
+  transform/security_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Microsoft Windows")
+          - set(attributes["vendor"], "Microsoft")
+          - set(attributes["product"], "Windows")
+
+          # CIM Authentication fields
+          - set(attributes["user"], attributes["target.user_name"]) where attributes["target.user_name"] != nil
+          - set(attributes["src_user"], attributes["subject.user_name"]) where attributes["subject.user_name"] != nil
+          - set(attributes["dest"], attributes["host.name"]) where attributes["host.name"] != nil
+
+          # CIM Network fields for logon events
+          - set(attributes["src"], attributes["source.ip"]) where attributes["source.ip"] != nil
+          - set(attributes["src_ip"], attributes["source.ip"]) where attributes["source.ip"] != nil
+          - set(attributes["src_port"], attributes["source.port"]) where attributes["source.port"] != nil
+
+          # CIM Signature
+          - set(attributes["signature"], attributes["event.description"]) where attributes["event.description"] != nil
+          - set(attributes["signature_id"], attributes["event.id"]) where attributes["event.id"] != nil
+
+          # CIM Action
+          - set(attributes["action"], attributes["event.action"]) where attributes["event.action"] != nil
+
+          # CIM Result
+          - set(attributes["result"], "success") where attributes["event.action"] == "logon_success" or attributes["event.action"] == "user_created"
+          - set(attributes["result"], "failure") where attributes["event.action"] == "logon_failed" or attributes["event.action"] == "auth_failed"
+
+          # CIM Process fields
+          - set(attributes["process"], attributes["process.name"]) where attributes["process.name"] != nil
+          - set(attributes["process_name"], attributes["process.name"]) where attributes["process.name"] != nil
+          - set(attributes["process_path"], attributes["process.name"]) where attributes["process.name"] != nil
+          - set(attributes["process_id"], attributes["process.id"]) where attributes["process.id"] != nil
+          - set(attributes["parent_process_id"], attributes["parent.process.name"]) where attributes["parent.process.name"] != nil
+          - set(attributes["process_exec"], attributes["process.command_line"]) where attributes["process.command_line"] != nil
+
+          # CIM Object fields
+          - set(attributes["object"], attributes["object.name"]) where attributes["object.name"] != nil
+          - set(attributes["object_category"], attributes["object.type"]) where attributes["object.type"] != nil
+          - set(attributes["file_name"], attributes["relative.target_name"]) where attributes["relative.target_name"] != nil
+          - set(attributes["file_path"], attributes["share.path"]) where attributes["share.path"] != nil
+
+          # CIM Tag
+          - set(attributes["tag"], "authentication") where attributes["event.category"] == "Logon" or attributes["event.category"] == "Authentication"
+          - set(attributes["tag"], "account") where attributes["event.category"] == "Account Management" or attributes["event.category"] == "Group Management"
+          - set(attributes["tag"], "process") where attributes["event.category"] == "Process Tracking"
+          - set(attributes["tag"], "privileged") where attributes["event.category"] == "Privilege Use"
+
+          # CIM App
+          - set(attributes["app"], attributes["event.provider"]) where attributes["event.provider"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/security_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Microsoft")
+          - set(attributes["metadata.product_name"], "Windows")
+          - set(attributes["metadata.log_type"], "WINEVTLOG")
+
+          # Map event types
+          - set(attributes["metadata.event_type"], "USER_LOGIN") where attributes["event.action"] == "logon_success"
+          - set(attributes["metadata.event_type"], "USER_LOGOUT") where attributes["event.action"] == "logoff"
+          - set(attributes["metadata.event_type"], "USER_CREATION") where attributes["event.action"] == "user_created"
+          - set(attributes["metadata.event_type"], "USER_DELETION") where attributes["event.action"] == "user_deleted"
+          - set(attributes["metadata.event_type"], "USER_CHANGE_PERMISSIONS") where attributes["event.action"] == "user_changed" or attributes["event.action"] == "password_changed"
+          - set(attributes["metadata.event_type"], "GROUP_CREATION") where attributes["event.category"] == "Group Management" and IsMatch(attributes["event.description"], "created")
+          - set(attributes["metadata.event_type"], "GROUP_DELETION") where attributes["event.category"] == "Group Management" and IsMatch(attributes["event.description"], "deleted")
+          - set(attributes["metadata.event_type"], "PROCESS_LAUNCH") where attributes["event.action"] == "process_created"
+          - set(attributes["metadata.event_type"], "PROCESS_TERMINATION") where attributes["event.action"] == "process_exited"
+          - set(attributes["metadata.event_type"], "SERVICE_INSTALLATION") where attributes["event.action"] == "service_installed"
+          - set(attributes["metadata.event_type"], "FILE_OPEN") where attributes["event.category"] == "Object Access"
+          - set(attributes["metadata.event_type"], "NETWORK_CONNECTION") where attributes["event.category"] == "Firewall"
+          - set(attributes["metadata.event_type"], "GENERIC_EVENT") where attributes["metadata.event_type"] == nil
+
+          # UDM Principal (subject - who performed the action)
+          - set(attributes["principal.user.userid"], attributes["subject.user_sid"]) where attributes["subject.user_sid"] != nil
+          - set(attributes["principal.user.user_display_name"], attributes["subject.user_name"]) where attributes["subject.user_name"] != nil
+          - set(attributes["principal.hostname"], attributes["workstation.name"]) where attributes["workstation.name"] != nil
+          - set(attributes["principal.hostname"], attributes["host.name"]) where attributes["workstation.name"] == nil and attributes["host.name"] != nil
+          - set(attributes["principal.ip"], attributes["source.ip"]) where attributes["source.ip"] != nil
+          - set(attributes["principal.port"], attributes["source.port"]) where attributes["source.port"] != nil
+          - set(attributes["principal.process.pid"], attributes["process.id"]) where attributes["process.id"] != nil
+          - set(attributes["principal.process.command_line"], attributes["process.command_line"]) where attributes["process.command_line"] != nil
+          - set(attributes["principal.process.file.full_path"], attributes["process.name"]) where attributes["process.name"] != nil
+
+          # UDM Target (object of action)
+          - set(attributes["target.user.userid"], attributes["target.user_sid"]) where attributes["target.user_sid"] != nil
+          - set(attributes["target.user.user_display_name"], attributes["target.user_name"]) where attributes["target.user_name"] != nil
+          - set(attributes["target.hostname"], attributes["host.name"]) where attributes["host.name"] != nil
+          - set(attributes["target.file.full_path"], attributes["object.name"]) where attributes["object.name"] != nil
+          - set(attributes["target.resource.name"], attributes["service.name"]) where attributes["service.name"] != nil
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.action"] == "logon_success" or attributes["event.action"] == "user_created"
+          - set(attributes["security_result.action"], "BLOCK") where attributes["event.action"] == "logon_failed" or attributes["event.action"] == "account_locked"
+          - set(attributes["security_result.severity"], "LOW") where attributes["event.severity"] == "info"
+          - set(attributes["security_result.severity"], "MEDIUM") where attributes["event.severity"] == "warning" or attributes["event.action"] == "logon_failed"
+          - set(attributes["security_result.severity"], "HIGH") where attributes["event.action"] == "account_locked" or attributes["event.category"] == "Privilege Use"
+          - set(attributes["security_result.severity"], "CRITICAL") where attributes["event.severity"] == "critical"
+          - set(attributes["security_result.summary"], attributes["event.description"]) where attributes["event.description"] != nil
+
+          # UDM Network
+          - set(attributes["network.ip_protocol"], "TCP") where attributes["source.ip"] != nil
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to file
+  # file:
+  #   path: ./security-events.json
+
+service:
+  pipelines:
+    logs:
+      receivers: [windowseventlog/security]
+      processors:
+        - transform/security_eventdata
+        - transform/security_event_descriptions
+        - transform/security_eventdata_fields
+        - transform/security_cim
+        - transform/security_udm
+      exporters: [logging]
