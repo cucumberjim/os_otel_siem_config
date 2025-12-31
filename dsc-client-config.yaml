@@ -1,0 +1,286 @@
+# OpenTelemetry Collector Configuration for PowerShell DSC 3 Client Logs
+# This configuration ingests PowerShell DSC (Desired State Configuration) logs and transforms them with Splunk CIM and Google SecOps UDM compliant field names
+# Supports DSC v3 cross-platform logs (Windows, Linux, macOS)
+
+receivers:
+  filelog:
+    include:
+      # Windows DSC log locations
+      - C:\Windows\System32\Configuration\*.log
+      - C:\ProgramData\DSC\*.log
+      # Linux DSC log locations
+      - /var/log/dsc/*.log
+      - /var/log/powershell-dsc/*.log
+      # Alternative log locations
+      - /opt/microsoft/dsc/logs/*.log
+    start_at: end
+
+    # Parse DSC log format: [timestamp] LEVEL: message
+    operators:
+      # Parse the log line with regex to extract timestamp, level, and message
+      - type: regex_parser
+        regex: '^\[(?P<timestamp>[^\]]+)\]\s+(?P<severity>[A-Z]+):\s+(?P<message>.*)$'
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: '%Y-%m-%dT%H:%M:%S'
+        severity:
+          parse_from: attributes.severity
+          mapping:
+            verbose: VERBOSE
+            debug: DEBUG
+            info: INFO
+            information: INFO
+            warn: WARN
+            warning: WARN
+            error: ERROR
+            critical: CRITICAL
+            fatal: FATAL
+
+      # Move message to body
+      - type: move
+        from: attributes.message
+        to: body
+
+processors:
+  # Extract structured information from DSC log messages
+  transform/dsc_extract:
+    log_statements:
+      - context: log
+        statements:
+          # Set source metadata
+          - set(attributes["log.source"], "powershell.dsc")
+          - set(attributes["log.source.type"], "filelog")
+
+          # Store original message
+          - set(attributes["dsc.message"], body) where body != nil
+          - set(attributes["log.file.path"], resource.attributes["log.file.path"]) where resource.attributes["log.file.path"] != nil
+
+  # Parse DSC operations and resources from log messages
+  transform/dsc_parse_resources:
+    log_statements:
+      - context: log
+        statements:
+          # Detect Local Configuration Manager (LCM) operations
+          - set(attributes["dsc.lcm"], true) where IsMatch(body, "LCM:")
+          - set(attributes["dsc.component"], "LCM") where IsMatch(body, "LCM:")
+
+          # Parse resource patterns: [ResourceType]ResourceName
+          # Common DSC resources
+          - set(attributes["dsc.resource.type"], "Package") where IsMatch(body, "\\[Package\\]")
+          - set(attributes["dsc.resource.type"], "Service") where IsMatch(body, "\\[Service\\]")
+          - set(attributes["dsc.resource.type"], "File") where IsMatch(body, "\\[File\\]")
+          - set(attributes["dsc.resource.type"], "Archive") where IsMatch(body, "\\[Archive\\]")
+          - set(attributes["dsc.resource.type"], "Environment") where IsMatch(body, "\\[Environment\\]")
+          - set(attributes["dsc.resource.type"], "Group") where IsMatch(body, "\\[Group\\]")
+          - set(attributes["dsc.resource.type"], "Log") where IsMatch(body, "\\[Log\\]")
+          - set(attributes["dsc.resource.type"], "ProcessSet") where IsMatch(body, "\\[ProcessSet\\]")
+          - set(attributes["dsc.resource.type"], "Registry") where IsMatch(body, "\\[Registry\\]")
+          - set(attributes["dsc.resource.type"], "Script") where IsMatch(body, "\\[Script\\]")
+          - set(attributes["dsc.resource.type"], "User") where IsMatch(body, "\\[User\\]")
+          - set(attributes["dsc.resource.type"], "WindowsFeature") where IsMatch(body, "\\[WindowsFeature\\]")
+          - set(attributes["dsc.resource.type"], "WindowsOptionalFeature") where IsMatch(body, "\\[WindowsOptionalFeature\\]")
+          - set(attributes["dsc.resource.type"], "WindowsProcess") where IsMatch(body, "\\[WindowsProcess\\]")
+
+          # Detect DSC operations (Test, Set, Get)
+          - set(attributes["dsc.operation"], "Test") where IsMatch(body, "Test-TargetResource")
+          - set(attributes["dsc.operation"], "Test") where IsMatch(body, "Testing")
+          - set(attributes["dsc.operation"], "Set") where IsMatch(body, "Set-TargetResource")
+          - set(attributes["dsc.operation"], "Set") where IsMatch(body, "Applying")
+          - set(attributes["dsc.operation"], "Set") where IsMatch(body, "Setting")
+          - set(attributes["dsc.operation"], "Get") where IsMatch(body, "Get-TargetResource")
+
+          # Detect desired state status
+          - set(attributes["dsc.in_desired_state"], true) where IsMatch(body, "InDesiredState.*=.*[Tt]rue")
+          - set(attributes["dsc.in_desired_state"], true) where IsMatch(body, "[Ii]n desired state")
+          - set(attributes["dsc.in_desired_state"], false) where IsMatch(body, "InDesiredState.*=.*[Ff]alse")
+          - set(attributes["dsc.in_desired_state"], false) where IsMatch(body, "[Nn]ot in desired state")
+
+          # Detect operation results
+          - set(attributes["dsc.result"], "success") where IsMatch(body, "completed successfully")
+          - set(attributes["dsc.result"], "success") where IsMatch(body, "succeeded")
+          - set(attributes["dsc.result"], "applied") where IsMatch(body, "applied")
+          - set(attributes["dsc.result"], "configured") where IsMatch(body, "configured")
+          - set(attributes["dsc.result"], "compliant") where IsMatch(body, "compliant")
+          - set(attributes["dsc.result"], "failed") where IsMatch(body, "failed")
+          - set(attributes["dsc.result"], "error") where IsMatch(body, "error")
+          - set(attributes["dsc.result"], "skipped") where IsMatch(body, "skipped")
+
+          # Detect configuration changes
+          - set(attributes["dsc.changed"], true) where attributes["dsc.in_desired_state"] == false and attributes["dsc.operation"] == "Set"
+          - set(attributes["dsc.changed"], true) where attributes["dsc.result"] == "applied"
+          - set(attributes["dsc.changed"], true) where attributes["dsc.result"] == "configured"
+          - set(attributes["dsc.changed"], false) where attributes["dsc.in_desired_state"] == true
+          - set(attributes["dsc.changed"], false) where attributes["dsc.result"] == "compliant"
+          - set(attributes["dsc.changed"], false) where attributes["dsc.result"] == "skipped"
+
+          # Detect configuration run phases
+          - set(attributes["dsc.phase"], "start") where IsMatch(body, "Starting")
+          - set(attributes["dsc.phase"], "start") where IsMatch(body, "consistency check")
+          - set(attributes["dsc.phase"], "test") where attributes["dsc.operation"] == "Test"
+          - set(attributes["dsc.phase"], "apply") where attributes["dsc.operation"] == "Set"
+          - set(attributes["dsc.phase"], "complete") where IsMatch(body, "completed")
+          - set(attributes["dsc.phase"], "complete") where IsMatch(body, "finished")
+
+          # Parse configuration name (if present in logs)
+          - set(attributes["dsc.configuration"], true) where IsMatch(body, "[Cc]onfiguration")
+
+  # Categorize DSC events
+  transform/dsc_categorize:
+    log_statements:
+      - context: log
+        statements:
+          # Categorize by message content
+          - set(attributes["event.category"], "run") where attributes["dsc.lcm"] == true
+          - set(attributes["event.category"], "run") where IsMatch(body, "Starting")
+          - set(attributes["event.category"], "run") where IsMatch(body, "consistency check")
+          - set(attributes["event.category"], "resource") where attributes["dsc.resource.type"] != nil
+          - set(attributes["event.category"], "configuration") where attributes["dsc.resource.type"] != nil
+          - set(attributes["event.category"], "test") where attributes["dsc.operation"] == "Test"
+          - set(attributes["event.category"], "apply") where attributes["dsc.operation"] == "Set"
+
+          # Set event action based on operation
+          - set(attributes["event.action"], "run_start") where attributes["dsc.phase"] == "start"
+          - set(attributes["event.action"], "run_complete") where attributes["dsc.phase"] == "complete"
+          - set(attributes["event.action"], "resource_test") where attributes["dsc.operation"] == "Test"
+          - set(attributes["event.action"], "resource_apply") where attributes["dsc.operation"] == "Set"
+          - set(attributes["event.action"], "resource_get") where attributes["dsc.operation"] == "Get"
+          - set(attributes["event.action"], "resource_modified") where attributes["dsc.changed"] == true
+          - set(attributes["event.action"], "resource_compliant") where attributes["dsc.in_desired_state"] == true
+          - set(attributes["event.action"], "resource_drift") where attributes["dsc.in_desired_state"] == false
+
+          # Set outcome based on results
+          - set(attributes["event.outcome"], "success") where severity_text == "INFO" and attributes["dsc.result"] != "failed" and attributes["dsc.result"] != "error"
+          - set(attributes["event.outcome"], "success") where attributes["dsc.result"] == "success"
+          - set(attributes["event.outcome"], "success") where attributes["dsc.result"] == "applied"
+          - set(attributes["event.outcome"], "success") where attributes["dsc.result"] == "configured"
+          - set(attributes["event.outcome"], "success") where attributes["dsc.result"] == "compliant"
+          - set(attributes["event.outcome"], "failure") where severity_text == "ERROR" or severity_text == "CRITICAL" or severity_text == "FATAL"
+          - set(attributes["event.outcome"], "failure") where attributes["dsc.result"] == "failed" or attributes["dsc.result"] == "error"
+
+          # Set severity mapping
+          - set(attributes["event.severity"], "verbose") where severity_text == "VERBOSE"
+          - set(attributes["event.severity"], "debug") where severity_text == "DEBUG"
+          - set(attributes["event.severity"], "info") where severity_text == "INFO"
+          - set(attributes["event.severity"], "warning") where severity_text == "WARN"
+          - set(attributes["event.severity"], "error") where severity_text == "ERROR"
+          - set(attributes["event.severity"], "critical") where severity_text == "CRITICAL" or severity_text == "FATAL"
+
+  # Map to Splunk CIM fields
+  transform/dsc_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Microsoft PowerShell DSC")
+          - set(attributes["vendor"], "Microsoft")
+          - set(attributes["product"], "dsc")
+
+          # CIM Signature (event description)
+          - set(attributes["signature"], "DSC Run Started") where attributes["event.action"] == "run_start"
+          - set(attributes["signature"], "DSC Run Complete") where attributes["event.action"] == "run_complete"
+          - set(attributes["signature"], "Resource Test") where attributes["dsc.operation"] == "Test"
+          - set(attributes["signature"], "Resource Applied") where attributes["dsc.result"] == "applied"
+          - set(attributes["signature"], "Resource Configured") where attributes["dsc.result"] == "configured"
+          - set(attributes["signature"], "Resource Compliant") where attributes["dsc.in_desired_state"] == true
+          - set(attributes["signature"], "Resource Drift Detected") where attributes["dsc.in_desired_state"] == false and attributes["dsc.operation"] == "Test"
+          - set(attributes["signature"], "Resource Failed") where attributes["dsc.result"] == "failed" or attributes["dsc.result"] == "error"
+          - set(attributes["signature"], "Configuration Management") where attributes["event.category"] == "configuration" and attributes["signature"] == nil
+
+          # CIM Action
+          - set(attributes["action"], "test") where attributes["dsc.operation"] == "Test"
+          - set(attributes["action"], "apply") where attributes["dsc.operation"] == "Set"
+          - set(attributes["action"], "get") where attributes["dsc.operation"] == "Get"
+          - set(attributes["action"], "configure") where attributes["dsc.result"] == "configured"
+          - set(attributes["action"], "modify") where attributes["dsc.changed"] == true
+          - set(attributes["action"], "allowed") where attributes["dsc.in_desired_state"] == true
+          - set(attributes["action"], "failure") where attributes["dsc.result"] == "failed" or attributes["dsc.result"] == "error"
+
+          # CIM Result
+          - set(attributes["result"], "success") where attributes["event.outcome"] == "success"
+          - set(attributes["result"], "failure") where attributes["event.outcome"] == "failure"
+
+          # CIM Object (the resource being managed)
+          - set(attributes["object_category"], attributes["dsc.resource.type"]) where attributes["dsc.resource.type"] != nil
+
+          # CIM Tag
+          - set(attributes["tag"], "configuration")
+          - set(attributes["tag"], "change") where attributes["dsc.changed"] == true
+          - set(attributes["tag"], "compliance") where attributes["dsc.in_desired_state"] == true or attributes["dsc.in_desired_state"] == false
+
+          # CIM App
+          - set(attributes["app"], "dsc")
+
+  # Map to Google SecOps UDM fields
+  transform/dsc_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Microsoft")
+          - set(attributes["metadata.product_name"], "PowerShell DSC")
+          - set(attributes["metadata.log_type"], "APPLICATION_LOG")
+
+          # Map to UDM event types based on DSC operations
+          - set(attributes["metadata.event_type"], "SETTING_MODIFICATION") where attributes["dsc.changed"] == true
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["dsc.operation"] == "Set" and attributes["dsc.changed"] == true
+          - set(attributes["metadata.event_type"], "STATUS_UPDATE") where attributes["dsc.operation"] == "Test"
+          - set(attributes["metadata.event_type"], "STATUS_UPDATE") where attributes["dsc.in_desired_state"] == true
+          - set(attributes["metadata.event_type"], "SCAN_UNCATEGORIZED") where attributes["dsc.operation"] == "Get"
+          - set(attributes["metadata.event_type"], "GENERIC_EVENT") where attributes["event.category"] == "run"
+
+          # UDM Target (the resource being managed)
+          - set(attributes["target.resource.type"], attributes["dsc.resource.type"]) where attributes["dsc.resource.type"] != nil
+          - set(attributes["target.resource.attribute.labels"], attributes["dsc.operation"]) where attributes["dsc.operation"] != nil
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.outcome"] == "success"
+          - set(attributes["security_result.action"], "BLOCK") where attributes["event.outcome"] == "failure"
+
+          # Map severity to UDM severity levels
+          - set(attributes["security_result.severity"], "INFORMATIONAL") where severity_text == "VERBOSE" or severity_text == "DEBUG" or severity_text == "INFO"
+          - set(attributes["security_result.severity"], "LOW") where severity_text == "WARN"
+          - set(attributes["security_result.severity"], "MEDIUM") where severity_text == "ERROR"
+          - set(attributes["security_result.severity"], "HIGH") where severity_text == "CRITICAL" or severity_text == "FATAL"
+
+          # UDM Summary
+          - set(attributes["security_result.summary"], body) where body != nil
+
+          # UDM Additional Context
+          - set(attributes["additional.fields"], "configuration_drift") where attributes["dsc.in_desired_state"] == false
+          - set(attributes["additional.fields"], "compliant") where attributes["dsc.in_desired_state"] == true
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to Splunk HEC
+  # splunk_hec:
+  #   token: "your-hec-token"
+  #   endpoint: "https://splunk:8088/services/collector"
+  #   source: "dsc"
+  #   sourcetype: "powershell:dsc"
+  #   index: "main"
+
+  # Example: Export to Google SecOps (Chronicle)
+  # googlecloud:
+  #   project: "your-project-id"
+  #   log_name: "powershell_dsc"
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors:
+        - transform/dsc_extract
+        - transform/dsc_parse_resources
+        - transform/dsc_categorize
+        - transform/dsc_cim
+        - transform/dsc_udm
+      exporters: [logging]

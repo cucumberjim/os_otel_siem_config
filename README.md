@@ -39,6 +39,7 @@ These configurations use the OpenTelemetry Collector to ingest event logs and tr
 | Configuration File | Log Source | Description |
 |-------------------|------------|-------------|
 | `cinc-client-config.yaml` | /var/log/cinc-client/client.log, /var/log/chef/client.log | Cinc/Chef Infra Client resource operations and run logs |
+| `dsc-client-config.yaml` | Windows: C:\ProgramData\DSC\*.log, Linux: /var/log/dsc/*.log | PowerShell DSC 3 desired state configuration operations |
 
 ## Features
 
@@ -79,7 +80,7 @@ All configurations include mappings to [Splunk Common Information Model](https:/
 
 #### Change Data Model Fields
 - `object` - Object being modified
-- `object_category` - Type of object (file, service, user, package, template, etc.)
+- `object_category` - Type of object (file, service, user, package, template, registry, etc.)
 - `object_path` - Path to object
 
 ### Google SecOps UDM Compliance
@@ -182,6 +183,16 @@ All configurations include mappings to [Google SecOps Unified Data Model](https:
 - `cinc.changed` - Whether the resource was modified (true/false)
 - `cinc.processing` - Indicates resource processing event
 - `cinc.cookbook_info` - Contains cookbook/recipe information
+
+**PowerShell DSC Events:**
+- `dsc.resource.type` - DSC resource type (Package, Service, File, Registry, etc.)
+- `dsc.operation` - DSC operation (Test, Set, Get)
+- `dsc.result` - Operation result (success, applied, configured, compliant, failed, etc.)
+- `dsc.in_desired_state` - Whether resource is in desired state (true/false)
+- `dsc.changed` - Whether the resource was modified (true/false)
+- `dsc.phase` - Configuration phase (start, test, apply, complete)
+- `dsc.lcm` - Local Configuration Manager operation indicator
+- `dsc.component` - DSC component (LCM, Resource, etc.)
 
 ## Usage
 
@@ -331,6 +342,25 @@ Original Fields → UDM Fields:
 - `severity: "INFO"` → `security_result.severity: "INFORMATIONAL"`
 - `cinc.result: "installed"` → `security_result.action: "ALLOW"`
 
+**PowerShell DSC Resource Applied:**
+
+Log: `[2024-01-15T10:30:47.012Z] INFO: [Service]nginx: Set-TargetResource completed successfully`
+
+Original Fields → CIM Fields:
+- `severity: "INFO"` → `signature: "Resource Applied"`
+- `dsc.resource.type: "Service"` → `object_category: "Service"`
+- `dsc.operation: "Set"` → `action: "apply"`
+- `dsc.result: "success"` → `result: "success"`
+- `dsc.changed: true` → `tag: "change"`
+- → `vendor: "Microsoft"`, `product: "dsc"`
+
+Original Fields → UDM Fields:
+- → `metadata.event_type: "RESOURCE_MODIFICATION"`
+- → `metadata.vendor_name: "Microsoft"`, `metadata.product_name: "PowerShell DSC"`
+- `dsc.resource.type: "Service"` → `target.resource.type: "Service"`
+- `severity: "INFO"` → `security_result.severity: "INFORMATIONAL"`
+- `dsc.result: "success"` → `security_result.action: "ALLOW"`
+
 ## Customization
 
 ### Adding Event IDs
@@ -460,6 +490,21 @@ transform/journald_your_app:
 **Client Run Events**
 - Client run started → CIM: Configuration, UDM: GENERIC_EVENT
 - Client run complete → CIM: Configuration, UDM: GENERIC_EVENT
+
+### PowerShell DSC Events
+
+**Resource Operations**
+- Resource test (compliance check) → CIM: Configuration, UDM: STATUS_UPDATE
+- Resource applied/configured → CIM: Change, UDM: RESOURCE_MODIFICATION
+- Resource compliant (in desired state) → CIM: Configuration, UDM: STATUS_UPDATE
+- Configuration drift detected → CIM: Change, UDM: STATUS_UPDATE
+- Resource get (information gathering) → CIM: Configuration, UDM: SCAN_UNCATEGORIZED
+- Resource failed → CIM: Configuration (failure), UDM: RESOURCE_MODIFICATION (blocked)
+
+**LCM Events**
+- DSC run started → CIM: Configuration, UDM: GENERIC_EVENT
+- Consistency check → CIM: Configuration, UDM: STATUS_UPDATE
+- DSC run complete → CIM: Configuration, UDM: GENERIC_EVENT
 
 ## Additional Resources
 
