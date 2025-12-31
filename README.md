@@ -50,6 +50,12 @@ These configurations use the OpenTelemetry Collector to ingest event logs and tr
 | `apt-log-config.yaml` | /var/log/apt/history.log, /var/log/apt/term.log | APT package manager (Debian, Ubuntu) |
 | `windowsupdate-log-config.yaml` | C:\Windows\Logs\WindowsUpdate\WindowsUpdate.log | Windows Update operations |
 
+### Messaging Logs
+
+| Configuration File | Log Source | Description |
+|-------------------|------------|-------------|
+| `postfix-log-config.yaml` | /var/log/maillog, /var/log/mail.log | Postfix mail server operations and email transactions |
+
 ## Features
 
 ### Event Processing
@@ -231,6 +237,23 @@ All configurations include mappings to [Google SecOps Unified Data Model](https:
 - `windowsupdate.has_kb` - Boolean indicating KB article reference
 - `windowsupdate.component` - Windows Update component
 - `windowsupdate.is_update_operation` - Boolean indicating update operation
+
+**Postfix Mail Server Events:**
+- `postfix.component` - Postfix component (smtp, smtpd, qmgr, cleanup, bounce, etc.)
+- `postfix.queue_id` - Message queue identifier
+- `postfix.from` - Indicates presence of sender email address
+- `postfix.to` - Indicates presence of recipient email address
+- `postfix.relay` - Relay server information
+- `postfix.status` - Delivery status (sent, deferred, bounced, expired)
+- `postfix.action` - Action performed (reject, connect, disconnect, etc.)
+- `postfix.sasl` - SASL authentication status (login, failed)
+- `postfix.size` - Message size
+- `postfix.nrcpt` - Number of recipients
+- `postfix.message_id` - Email message ID
+- `postfix.smtp_response` - SMTP response code category (2xx, 4xx, 5xx)
+- `postfix.dsn` - Delivery Status Notification code
+- `postfix.hostname` - Server hostname
+- `postfix.pid` - Process ID
 
 ## Usage
 
@@ -416,6 +439,23 @@ Original Fields → UDM Fields:
 - `severity: "INFO"` → `security_result.severity: "INFORMATIONAL"`
 - `dnf.result: "success"` → `security_result.action: "ALLOW"`
 
+**Postfix Email Sent:**
+
+Log: `Jan 15 10:30:45 mailserver postfix/smtp[12345]: 1A2B3C4D5: to=<user@example.com>, relay=smtp.example.com[192.168.1.100]:25, delay=0.52, status=sent (250 2.0.0 OK)`
+
+Original Fields → CIM Fields:
+- `postfix.component: "smtp"` → `app: "postfix"`
+- `postfix.status: "sent"` → `signature: "Email Sent"`, `action: "delivered"`, `result: "success"`
+- → `vendor: "Postfix"`, `product: "postfix"`, `tag: "email"`
+- `postfix.to: true` → `recipient: "recipient"`, `object_category: "email"`
+
+Original Fields → UDM Fields:
+- → `metadata.event_type: "EMAIL_TRANSACTION"`
+- → `metadata.vendor_name: "Postfix"`, `metadata.product_name: "Postfix MTA"`
+- → `network.application_protocol: "SMTP"`
+- `postfix.status: "sent"` → `security_result.action: "ALLOW"`
+- → `security_result.severity: "INFORMATIONAL"`
+
 ## Customization
 
 ### Adding Event IDs
@@ -587,6 +627,30 @@ transform/journald_your_app:
 - Update download → CIM: Update, UDM: RESOURCE_READ
 - Update install → CIM: Change/Update, UDM: RESOURCE_MODIFICATION
 - Update failed → CIM: Update (failure), UDM: RESOURCE_MODIFICATION (blocked)
+
+### Postfix Mail Server Events
+
+**Email Delivery**
+- Email sent (status=sent) → CIM: Email, UDM: EMAIL_TRANSACTION (ALLOW)
+- Email deferred (status=deferred) → CIM: Email, UDM: EMAIL_TRANSACTION
+- Email bounced (status=bounced) → CIM: Email, UDM: EMAIL_TRANSACTION (BLOCK)
+- Email rejected (NOQUEUE: reject) → CIM: Email, UDM: EMAIL_TRANSACTION (BLOCK)
+- Email expired (status=expired) → CIM: Email, UDM: EMAIL_TRANSACTION (BLOCK)
+
+**Connection Events**
+- SMTP connection established → CIM: Network, UDM: NETWORK_CONNECTION
+- SMTP disconnection → CIM: Network, UDM: NETWORK_CONNECTION
+- Lost connection → CIM: Network, UDM: NETWORK_CONNECTION
+- Connection timeout → CIM: Network, UDM: NETWORK_CONNECTION
+
+**Authentication**
+- SASL authentication success → CIM: Authentication, UDM: USER_LOGIN
+- SASL authentication failure → CIM: Authentication, UDM: USER_LOGIN (blocked)
+
+**Queue Management**
+- Message queued (qmgr) → CIM: Email, UDM: STATUS_UPDATE
+- Message received (smtpd) → CIM: Email, UDM: EMAIL_TRANSACTION
+- Message cleanup → CIM: Email, UDM: STATUS_UPDATE
 
 ## Additional Resources
 

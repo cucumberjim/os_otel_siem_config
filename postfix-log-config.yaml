@@ -1,0 +1,303 @@
+# OpenTelemetry Collector Configuration for Postfix Mail Server Logs
+# This configuration ingests Postfix logs and transforms them with Splunk CIM and Google SecOps UDM compliant field names
+# Postfix is a popular Mail Transfer Agent (MTA) on Linux systems
+
+receivers:
+  filelog:
+    include:
+      # Common Postfix log locations
+      - /var/log/maillog      # RHEL/CentOS/Rocky/Fedora
+      - /var/log/mail.log     # Debian/Ubuntu
+      - /var/log/mail.info
+      - /var/log/mail.warn
+      - /var/log/mail.err
+    start_at: end
+
+    # Parse syslog format used by Postfix
+    operators:
+      # Parse syslog format: Mon DD HH:MM:SS hostname process[pid]: message
+      - type: regex_parser
+        regex: '^(?P<timestamp>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(?P<hostname>\S+)\s+(?P<process>postfix/\w+)\[(?P<pid>\d+)\]:\s+(?P<message>.*)$'
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: '%b %_d %H:%M:%S'
+
+      # Move message to body
+      - type: move
+        from: attributes.message
+        to: body
+
+      # Keep process, hostname, and PID
+      - type: add
+        field: attributes.postfix.process
+        value: EXPR(attributes.process)
+
+      - type: add
+        field: attributes.postfix.pid
+        value: EXPR(attributes.pid)
+
+      - type: add
+        field: attributes.postfix.hostname
+        value: EXPR(attributes.hostname)
+
+processors:
+  # Extract structured information from Postfix log messages
+  transform/postfix_extract:
+    log_statements:
+      - context: log
+        statements:
+          # Set source metadata
+          - set(attributes["log.source"], "postfix")
+          - set(attributes["log.source.type"], "filelog")
+          - set(attributes["postfix.message"], body) where body != nil
+          - set(attributes["log.file.path"], resource.attributes["log.file.path"]) where resource.attributes["log.file.path"] != nil
+
+          # Extract Postfix component from process name (e.g., postfix/smtp -> smtp)
+          - set(attributes["postfix.component"], "smtp") where IsMatch(attributes["postfix.process"], "postfix/smtp$")
+          - set(attributes["postfix.component"], "smtpd") where IsMatch(attributes["postfix.process"], "postfix/smtpd")
+          - set(attributes["postfix.component"], "qmgr") where IsMatch(attributes["postfix.process"], "postfix/qmgr")
+          - set(attributes["postfix.component"], "cleanup") where IsMatch(attributes["postfix.process"], "postfix/cleanup")
+          - set(attributes["postfix.component"], "pickup") where IsMatch(attributes["postfix.process"], "postfix/pickup")
+          - set(attributes["postfix.component"], "bounce") where IsMatch(attributes["postfix.process"], "postfix/bounce")
+          - set(attributes["postfix.component"], "local") where IsMatch(attributes["postfix.process"], "postfix/local")
+          - set(attributes["postfix.component"], "virtual") where IsMatch(attributes["postfix.process"], "postfix/virtual")
+          - set(attributes["postfix.component"], "pipe") where IsMatch(attributes["postfix.process"], "postfix/pipe")
+          - set(attributes["postfix.component"], "master") where IsMatch(attributes["postfix.process"], "postfix/master")
+          - set(attributes["postfix.component"], "postscreen") where IsMatch(attributes["postfix.process"], "postfix/postscreen")
+          - set(attributes["postfix.component"], "anvil") where IsMatch(attributes["postfix.process"], "postfix/anvil")
+          - set(attributes["postfix.component"], "trivial-rewrite") where IsMatch(attributes["postfix.process"], "postfix/trivial-rewrite")
+
+  # Parse Postfix message details
+  transform/postfix_parse_message:
+    log_statements:
+      - context: log
+        statements:
+          # Extract queue ID (alphanumeric identifier at start of message)
+          - set(attributes["postfix.queue_id"], true) where IsMatch(body, "^[A-F0-9]{10,}:")
+
+          # Parse email addresses
+          - set(attributes["postfix.from"], true) where IsMatch(body, "from=<")
+          - set(attributes["postfix.to"], true) where IsMatch(body, "to=<")
+          - set(attributes["postfix.original_to"], true) where IsMatch(body, "orig_to=<")
+
+          # Parse relay information
+          - set(attributes["postfix.relay"], true) where IsMatch(body, "relay=")
+
+          # Parse status
+          - set(attributes["postfix.status"], "sent") where IsMatch(body, "status=sent")
+          - set(attributes["postfix.status"], "deferred") where IsMatch(body, "status=deferred")
+          - set(attributes["postfix.status"], "bounced") where IsMatch(body, "status=bounced")
+          - set(attributes["postfix.status"], "expired") where IsMatch(body, "status=expired")
+
+          # Parse rejection reasons
+          - set(attributes["postfix.action"], "reject") where IsMatch(body, "NOQUEUE: reject:")
+          - set(attributes["postfix.action"], "reject_warning") where IsMatch(body, "reject_warning")
+
+          # Parse connection events
+          - set(attributes["postfix.action"], "connect") where IsMatch(body, "connect from")
+          - set(attributes["postfix.action"], "disconnect") where IsMatch(body, "disconnect from")
+          - set(attributes["postfix.action"], "lost_connection") where IsMatch(body, "lost connection")
+          - set(attributes["postfix.action"], "timeout") where IsMatch(body, "timeout")
+
+          # Parse SASL authentication
+          - set(attributes["postfix.sasl"], "login") where IsMatch(body, "sasl_method=")
+          - set(attributes["postfix.sasl"], "failed") where IsMatch(body, "authentication failed")
+
+          # Parse message properties
+          - set(attributes["postfix.size"], true) where IsMatch(body, "size=\\d+")
+          - set(attributes["postfix.nrcpt"], true) where IsMatch(body, "nrcpt=\\d+")
+          - set(attributes["postfix.message_id"], true) where IsMatch(body, "message-id=<")
+
+          # Parse delays
+          - set(attributes["postfix.delay"], true) where IsMatch(body, "delay=")
+          - set(attributes["postfix.delays"], true) where IsMatch(body, "delays=")
+
+          # Parse DSN (Delivery Status Notification) codes
+          - set(attributes["postfix.dsn"], true) where IsMatch(body, "dsn=")
+
+          # Parse SMTP response codes
+          - set(attributes["postfix.smtp_response"], "2xx") where IsMatch(body, "\\b2\\d{2}\\s")
+          - set(attributes["postfix.smtp_response"], "4xx") where IsMatch(body, "\\b4\\d{2}\\s")
+          - set(attributes["postfix.smtp_response"], "5xx") where IsMatch(body, "\\b5\\d{2}\\s")
+
+  # Categorize Postfix events
+  transform/postfix_categorize:
+    log_statements:
+      - context: log
+        statements:
+          # Set event category based on component and action
+          - set(attributes["event.category"], "email") where attributes["postfix.status"] != nil
+          - set(attributes["event.category"], "email") where attributes["postfix.from"] == true or attributes["postfix.to"] == true
+          - set(attributes["event.category"], "network") where attributes["postfix.action"] == "connect" or attributes["postfix.action"] == "disconnect"
+          - set(attributes["event.category"], "authentication") where attributes["postfix.sasl"] != nil
+          - set(attributes["event.category"], "messaging")
+
+          # Set event action based on status and component
+          - set(attributes["event.action"], "email_sent") where attributes["postfix.status"] == "sent"
+          - set(attributes["event.action"], "email_deferred") where attributes["postfix.status"] == "deferred"
+          - set(attributes["event.action"], "email_bounced") where attributes["postfix.status"] == "bounced"
+          - set(attributes["event.action"], "email_expired") where attributes["postfix.status"] == "expired"
+          - set(attributes["event.action"], "email_rejected") where attributes["postfix.action"] == "reject"
+          - set(attributes["event.action"], "connection_established") where attributes["postfix.action"] == "connect"
+          - set(attributes["event.action"], "connection_closed") where attributes["postfix.action"] == "disconnect"
+          - set(attributes["event.action"], "authentication_success") where attributes["postfix.sasl"] == "login"
+          - set(attributes["event.action"], "authentication_failure") where attributes["postfix.sasl"] == "failed"
+          - set(attributes["event.action"], "message_queued") where attributes["postfix.component"] == "qmgr" and IsMatch(body, "queue active")
+          - set(attributes["event.action"], "message_received") where attributes["postfix.component"] == "smtpd" and attributes["postfix.queue_id"] == true
+          - set(attributes["event.action"], "message_cleanup") where attributes["postfix.component"] == "cleanup"
+
+          # Set outcome based on status and SMTP codes
+          - set(attributes["event.outcome"], "success") where attributes["postfix.status"] == "sent"
+          - set(attributes["event.outcome"], "success") where attributes["postfix.smtp_response"] == "2xx"
+          - set(attributes["event.outcome"], "failure") where attributes["postfix.status"] == "bounced"
+          - set(attributes["event.outcome"], "failure") where attributes["postfix.status"] == "expired"
+          - set(attributes["event.outcome"], "failure") where attributes["postfix.action"] == "reject"
+          - set(attributes["event.outcome"], "failure") where attributes["postfix.smtp_response"] == "5xx"
+          - set(attributes["event.outcome"], "deferred") where attributes["postfix.status"] == "deferred"
+          - set(attributes["event.outcome"], "deferred") where attributes["postfix.smtp_response"] == "4xx"
+
+          # Set severity based on status and component
+          - set(attributes["event.severity"], "info") where attributes["postfix.status"] == "sent"
+          - set(attributes["event.severity"], "info") where attributes["postfix.action"] == "connect" or attributes["postfix.action"] == "disconnect"
+          - set(attributes["event.severity"], "warning") where attributes["postfix.status"] == "deferred"
+          - set(attributes["event.severity"], "warning") where attributes["postfix.action"] == "reject_warning"
+          - set(attributes["event.severity"], "error") where attributes["postfix.status"] == "bounced"
+          - set(attributes["event.severity"], "error") where attributes["postfix.action"] == "reject"
+          - set(attributes["event.severity"], "error") where attributes["postfix.status"] == "expired"
+          - set(attributes["event.severity"], "info") where attributes["event.severity"] == nil
+
+          # Set severity_text for consistency
+          - set(severity_text, "INFO") where attributes["event.severity"] == "info"
+          - set(severity_text, "WARN") where attributes["event.severity"] == "warning"
+          - set(severity_text, "ERROR") where attributes["event.severity"] == "error"
+
+  # Map to Splunk CIM fields
+  transform/postfix_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Postfix MTA")
+          - set(attributes["vendor"], "Postfix")
+          - set(attributes["product"], "postfix")
+
+          # CIM Signature
+          - set(attributes["signature"], "Email Sent") where attributes["postfix.status"] == "sent"
+          - set(attributes["signature"], "Email Deferred") where attributes["postfix.status"] == "deferred"
+          - set(attributes["signature"], "Email Bounced") where attributes["postfix.status"] == "bounced"
+          - set(attributes["signature"], "Email Rejected") where attributes["postfix.action"] == "reject"
+          - set(attributes["signature"], "Email Expired") where attributes["postfix.status"] == "expired"
+          - set(attributes["signature"], "SMTP Connection") where attributes["postfix.action"] == "connect"
+          - set(attributes["signature"], "SMTP Disconnection") where attributes["postfix.action"] == "disconnect"
+          - set(attributes["signature"], "SASL Authentication") where attributes["postfix.sasl"] != nil
+          - set(attributes["signature"], "Message Queued") where IsMatch(body, "queue active")
+          - set(attributes["signature"], "Message Received") where attributes["postfix.component"] == "smtpd" and attributes["postfix.queue_id"] == true
+
+          # CIM Action
+          - set(attributes["action"], "delivered") where attributes["postfix.status"] == "sent"
+          - set(attributes["action"], "deferred") where attributes["postfix.status"] == "deferred"
+          - set(attributes["action"], "blocked") where attributes["postfix.action"] == "reject"
+          - set(attributes["action"], "blocked") where attributes["postfix.status"] == "bounced"
+          - set(attributes["action"], "connected") where attributes["postfix.action"] == "connect"
+          - set(attributes["action"], "disconnected") where attributes["postfix.action"] == "disconnect"
+
+          # CIM Result
+          - set(attributes["result"], "success") where attributes["event.outcome"] == "success"
+          - set(attributes["result"], "failure") where attributes["event.outcome"] == "failure"
+          - set(attributes["result"], "deferred") where attributes["event.outcome"] == "deferred"
+
+          # CIM Email fields (would need regex extraction for actual values in production)
+          - set(attributes["src_user"], "sender") where attributes["postfix.from"] == true
+          - set(attributes["recipient"], "recipient") where attributes["postfix.to"] == true
+
+          # CIM Object
+          - set(attributes["object_category"], "email")
+
+          # CIM Tag
+          - set(attributes["tag"], "email")
+          - set(attributes["tag"], "messaging")
+
+          # CIM App
+          - set(attributes["app"], "postfix")
+
+          # CIM Process fields
+          - set(attributes["process_id"], attributes["postfix.pid"]) where attributes["postfix.pid"] != nil
+
+          # CIM Destination (mail server)
+          - set(attributes["dest"], attributes["postfix.hostname"]) where attributes["postfix.hostname"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/postfix_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Postfix")
+          - set(attributes["metadata.product_name"], "Postfix MTA")
+          - set(attributes["metadata.log_type"], "SYSLOG")
+
+          # Map to UDM event types
+          - set(attributes["metadata.event_type"], "EMAIL_TRANSACTION") where attributes["postfix.status"] != nil
+          - set(attributes["metadata.event_type"], "NETWORK_CONNECTION") where attributes["postfix.action"] == "connect" or attributes["postfix.action"] == "disconnect"
+          - set(attributes["metadata.event_type"], "USER_LOGIN") where attributes["postfix.sasl"] == "login"
+          - set(attributes["metadata.event_type"], "STATUS_UPDATE") where attributes["postfix.component"] == "qmgr"
+          - set(attributes["metadata.event_type"], "GENERIC_EVENT") where attributes["metadata.event_type"] == nil
+
+          # UDM Network Email fields (would need regex extraction for actual email addresses)
+          - set(attributes["network.email.from"], "sender_address") where attributes["postfix.from"] == true
+          - set(attributes["network.email.to"], "recipient_address") where attributes["postfix.to"] == true
+
+          # UDM Principal (source mail server/sender)
+          - set(attributes["principal.hostname"], attributes["postfix.hostname"]) where attributes["postfix.hostname"] != nil
+
+          # UDM Target (destination mail server/recipient)
+          - set(attributes["target.application"], "SMTP") where attributes["postfix.component"] == "smtp" or attributes["postfix.component"] == "smtpd"
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.outcome"] == "success"
+          - set(attributes["security_result.action"], "BLOCK") where attributes["event.outcome"] == "failure"
+          - set(attributes["security_result.action"], "BLOCK") where attributes["postfix.action"] == "reject"
+
+          # Map severity to UDM levels
+          - set(attributes["security_result.severity"], "INFORMATIONAL") where attributes["event.severity"] == "info"
+          - set(attributes["security_result.severity"], "LOW") where attributes["event.severity"] == "warning"
+          - set(attributes["security_result.severity"], "MEDIUM") where attributes["event.severity"] == "error"
+
+          # UDM Summary
+          - set(attributes["security_result.summary"], body) where body != nil
+
+          # UDM Process information
+          - set(attributes["principal.process.pid"], attributes["postfix.pid"]) where attributes["postfix.pid"] != nil
+
+          # UDM Network session
+          - set(attributes["network.application_protocol"], "SMTP") where attributes["postfix.component"] == "smtp" or attributes["postfix.component"] == "smtpd"
+
+exporters:
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to Splunk HEC
+  # splunk_hec:
+  #   token: "your-hec-token"
+  #   endpoint: "https://splunk:8088/services/collector"
+  #   source: "postfix"
+  #   sourcetype: "linux:postfix"
+  #   index: "email"
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors:
+        - transform/postfix_extract
+        - transform/postfix_parse_message
+        - transform/postfix_categorize
+        - transform/postfix_cim
+        - transform/postfix_udm
+      exporters: [logging]
