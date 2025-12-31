@@ -1,0 +1,225 @@
+# OpenTelemetry Collector Configuration for Windows Update Logs
+# This configuration ingests Windows Update logs and transforms them with Splunk CIM and Google SecOps UDM compliant field names
+# Supports Windows Update text logs (older Windows versions and Windows Server)
+# Note: Windows 10+ primarily uses ETW logging; consider using windowseventlog receiver for Microsoft-Windows-WindowsUpdateClient/Operational
+
+receivers:
+  filelog:
+    include:
+      # Windows Update log locations (varies by Windows version)
+      - C:\Windows\WindowsUpdate.log
+      - C:\Windows\Logs\WindowsUpdate\WindowsUpdate.log
+      - C:\Windows\SoftwareDistribution\ReportingEvents.log
+    start_at: end
+
+    # Parse Windows Update log format: YYYY-MM-DD HH:MM:SS:mmm PID TID Component Message
+    operators:
+      # Parse the log line with regex
+      - type: regex_parser
+        regex: '^(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}:\d{3})\s+(?P<pid>\d+)\s+(?P<tid>\w+)\s+(?P<component>\w+)\s+(?P<message>.*)$'
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: '%Y-%m-%d %H:%M:%S:%L'
+
+      # Move message to body
+      - type: move
+        from: attributes.message
+        to: body
+
+      # Keep component and process info
+      - type: add
+        field: attributes.windows_update.component
+        value: EXPR(attributes.component)
+
+      - type: add
+        field: attributes.windows_update.pid
+        value: EXPR(attributes.pid)
+
+      - type: add
+        field: attributes.windows_update.tid
+        value: EXPR(attributes.tid)
+
+processors:
+  # Extract structured information from Windows Update log messages
+  transform/windowsupdate_extract:
+    log_statements:
+      - context: log
+        statements:
+          # Set source metadata
+          - set(attributes["log.source"], "windows.update")
+          - set(attributes["log.source.type"], "filelog")
+          - set(attributes["windowsupdate.message"], body) where body != nil
+          - set(attributes["log.file.path"], resource.attributes["log.file.path"]) where resource.attributes["log.file.path"] != nil
+
+  # Parse Windows Update operations
+  transform/windowsupdate_parse_operations:
+    log_statements:
+      - context: log
+        statements:
+          # Detect update operations
+          - set(attributes["windowsupdate.operation"], "search") where IsMatch(body, "[Ff]inding updates")
+          - set(attributes["windowsupdate.operation"], "search") where IsMatch(body, "[Ss]earch.*updates")
+          - set(attributes["windowsupdate.operation"], "download") where IsMatch(body, "[Dd]ownload")
+          - set(attributes["windowsupdate.operation"], "install") where IsMatch(body, "[Ii]nstall")
+          - set(attributes["windowsupdate.operation"], "commit") where IsMatch(body, "[Cc]ommit")
+
+          # Detect operation phases
+          - set(attributes["windowsupdate.phase"], "started") where IsMatch(body, "started")
+          - set(attributes["windowsupdate.phase"], "started") where IsMatch(body, "START")
+          - set(attributes["windowsupdate.phase"], "completed") where IsMatch(body, "completed")
+          - set(attributes["windowsupdate.phase"], "completed") where IsMatch(body, "succeeded")
+          - set(attributes["windowsupdate.phase"], "completed") where IsMatch(body, "END")
+          - set(attributes["windowsupdate.phase"], "failed") where IsMatch(body, "failed")
+          - set(attributes["windowsupdate.phase"], "failed") where IsMatch(body, "error")
+
+          # Detect update applicability
+          - set(attributes["windowsupdate.applicable"], true) where IsMatch(body, "is applicable")
+          - set(attributes["windowsupdate.applicable"], false) where IsMatch(body, "is not applicable")
+
+          # Detect KB numbers (Knowledge Base articles)
+          - set(attributes["windowsupdate.has_kb"], true) where IsMatch(body, "KB\\d+")
+
+          # Set result based on phase
+          - set(attributes["windowsupdate.result"], "success") where attributes["windowsupdate.phase"] == "completed"
+          - set(attributes["windowsupdate.result"], "in_progress") where attributes["windowsupdate.phase"] == "started"
+          - set(attributes["windowsupdate.result"], "failed") where attributes["windowsupdate.phase"] == "failed"
+
+          # Detect if this is an update operation
+          - set(attributes["windowsupdate.is_update_operation"], true) where attributes["windowsupdate.operation"] != nil
+
+  # Categorize Windows Update events
+  transform/windowsupdate_categorize:
+    log_statements:
+      - context: log
+        statements:
+          # Set event category
+          - set(attributes["event.category"], "update") where attributes["windowsupdate.is_update_operation"] == true
+          - set(attributes["event.category"], "package_management")
+
+          # Set event action
+          - set(attributes["event.action"], "update_search") where attributes["windowsupdate.operation"] == "search"
+          - set(attributes["event.action"], "update_download") where attributes["windowsupdate.operation"] == "download"
+          - set(attributes["event.action"], "update_install") where attributes["windowsupdate.operation"] == "install"
+          - set(attributes["event.action"], "update_commit") where attributes["windowsupdate.operation"] == "commit"
+
+          # Set outcome
+          - set(attributes["event.outcome"], "success") where attributes["windowsupdate.result"] == "success"
+          - set(attributes["event.outcome"], "failure") where attributes["windowsupdate.result"] == "failed"
+          - set(attributes["event.outcome"], "unknown") where attributes["windowsupdate.result"] == "in_progress"
+
+          # Set severity based on log content (Windows Update logs don't have explicit severity)
+          - set(attributes["event.severity"], "error") where IsMatch(body, "[Ee]rror")
+          - set(attributes["event.severity"], "error") where IsMatch(body, "HRESULT")
+          - set(attributes["event.severity"], "warning") where IsMatch(body, "[Ww]arning")
+          - set(attributes["event.severity"], "info") where attributes["event.severity"] == nil
+          - set(severity_text, "ERROR") where attributes["event.severity"] == "error"
+          - set(severity_text, "WARN") where attributes["event.severity"] == "warning"
+          - set(severity_text, "INFO") where attributes["event.severity"] == "info"
+
+  # Map to Splunk CIM fields
+  transform/windowsupdate_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Microsoft Windows Update")
+          - set(attributes["vendor"], "Microsoft")
+          - set(attributes["product"], "windows-update")
+
+          # CIM Signature
+          - set(attributes["signature"], "Update Search Started") where attributes["windowsupdate.operation"] == "search" and attributes["windowsupdate.phase"] == "started"
+          - set(attributes["signature"], "Update Search Completed") where attributes["windowsupdate.operation"] == "search" and attributes["windowsupdate.phase"] == "completed"
+          - set(attributes["signature"], "Update Download Started") where attributes["windowsupdate.operation"] == "download" and attributes["windowsupdate.phase"] == "started"
+          - set(attributes["signature"], "Update Download Completed") where attributes["windowsupdate.operation"] == "download" and attributes["windowsupdate.phase"] == "completed"
+          - set(attributes["signature"], "Update Install Started") where attributes["windowsupdate.operation"] == "install" and attributes["windowsupdate.phase"] == "started"
+          - set(attributes["signature"], "Update Install Completed") where attributes["windowsupdate.operation"] == "install" and attributes["windowsupdate.phase"] == "completed"
+          - set(attributes["signature"], "Update Failed") where attributes["windowsupdate.result"] == "failed"
+          - set(attributes["signature"], "Update Applicable") where attributes["windowsupdate.applicable"] == true
+
+          # CIM Action
+          - set(attributes["action"], "search") where attributes["windowsupdate.operation"] == "search"
+          - set(attributes["action"], "download") where attributes["windowsupdate.operation"] == "download"
+          - set(attributes["action"], "install") where attributes["windowsupdate.operation"] == "install"
+          - set(attributes["action"], "update") where attributes["windowsupdate.operation"] == "install"
+
+          # CIM Result
+          - set(attributes["result"], "success") where attributes["event.outcome"] == "success"
+          - set(attributes["result"], "failure") where attributes["event.outcome"] == "failure"
+
+          # CIM Object
+          - set(attributes["object_category"], "update") where attributes["windowsupdate.is_update_operation"] == true
+
+          # CIM Tag
+          - set(attributes["tag"], "software")
+          - set(attributes["tag"], "update")
+          - set(attributes["tag"], "change") where attributes["windowsupdate.operation"] == "install"
+
+          # CIM App
+          - set(attributes["app"], "windows-update")
+
+          # CIM Process fields
+          - set(attributes["process_id"], attributes["windows_update.pid"]) where attributes["windows_update.pid"] != nil
+
+  # Map to Google SecOps UDM fields
+  transform/windowsupdate_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Microsoft")
+          - set(attributes["metadata.product_name"], "Windows Update")
+          - set(attributes["metadata.log_type"], "APPLICATION_LOG")
+
+          # Map to UDM event types
+          - set(attributes["metadata.event_type"], "SCAN_UNCATEGORIZED") where attributes["windowsupdate.operation"] == "search"
+          - set(attributes["metadata.event_type"], "RESOURCE_READ") where attributes["windowsupdate.operation"] == "download"
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["windowsupdate.operation"] == "install" and attributes["windowsupdate.phase"] == "completed"
+          - set(attributes["metadata.event_type"], "STATUS_UPDATE") where attributes["windowsupdate.phase"] == "started"
+
+          # UDM Target (the update being applied)
+          - set(attributes["target.resource.type"], "update") where attributes["windowsupdate.is_update_operation"] == true
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.outcome"] == "success"
+          - set(attributes["security_result.action"], "BLOCK") where attributes["event.outcome"] == "failure"
+
+          # Map severity to UDM levels
+          - set(attributes["security_result.severity"], "INFORMATIONAL") where attributes["event.severity"] == "info"
+          - set(attributes["security_result.severity"], "LOW") where attributes["event.severity"] == "warning"
+          - set(attributes["security_result.severity"], "MEDIUM") where attributes["event.severity"] == "error"
+
+          # UDM Summary
+          - set(attributes["security_result.summary"], body) where body != nil
+
+          # UDM Process information
+          - set(attributes["principal.process.pid"], attributes["windows_update.pid"]) where attributes["windows_update.pid"] != nil
+
+exporters:
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to Splunk HEC
+  # splunk_hec:
+  #   token: "your-hec-token"
+  #   endpoint: "https://splunk:8088/services/collector"
+  #   source: "windows-update"
+  #   sourcetype: "windows:update"
+  #   index: "os"
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors:
+        - transform/windowsupdate_extract
+        - transform/windowsupdate_parse_operations
+        - transform/windowsupdate_categorize
+        - transform/windowsupdate_cim
+        - transform/windowsupdate_udm
+      exporters: [logging]

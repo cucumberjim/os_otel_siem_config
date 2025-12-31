@@ -41,6 +41,15 @@ These configurations use the OpenTelemetry Collector to ingest event logs and tr
 | `cinc-client-config.yaml` | /var/log/cinc-client/client.log, /var/log/chef/client.log | Cinc/Chef Infra Client resource operations and run logs |
 | `dsc-client-config.yaml` | Windows: C:\ProgramData\DSC\*.log, Linux: /var/log/dsc/*.log | PowerShell DSC 3 desired state configuration operations |
 
+### Package Management Logs
+
+| Configuration File | Log Source | Description |
+|-------------------|------------|-------------|
+| `dnf-log-config.yaml` | /var/log/dnf.log | DNF package manager (RHEL 8+, Rocky Linux, Fedora) |
+| `yum-log-config.yaml` | /var/log/yum.log | YUM package manager (RHEL/CentOS 7 and older) |
+| `apt-log-config.yaml` | /var/log/apt/history.log, /var/log/apt/term.log | APT package manager (Debian, Ubuntu) |
+| `windowsupdate-log-config.yaml` | C:\Windows\Logs\WindowsUpdate\WindowsUpdate.log | Windows Update operations |
+
 ## Features
 
 ### Event Processing
@@ -193,6 +202,35 @@ All configurations include mappings to [Google SecOps Unified Data Model](https:
 - `dsc.phase` - Configuration phase (start, test, apply, complete)
 - `dsc.lcm` - Local Configuration Manager operation indicator
 - `dsc.component` - DSC component (LCM, Resource, etc.)
+
+**DNF Package Manager Events:**
+- `dnf.operation` - Package operation (install, upgrade, remove, downgrade, reinstall)
+- `dnf.phase` - Operation phase (started, completed)
+- `dnf.result` - Operation result (success, in_progress, failed)
+- `dnf.is_package_operation` - Boolean indicating package operation
+
+**YUM Package Manager Events:**
+- `yum.operation` - Package operation (install, update, remove)
+- `yum.phase` - Operation phase (completed - YUM only logs completed operations)
+- `yum.result` - Operation result (success)
+- `yum.is_package_operation` - Boolean indicating package operation
+
+**APT Package Manager Events:**
+- `apt.operation` - High-level operation (install, upgrade, remove, purge, autoremove)
+- `apt.detail_type` - Specific package operation (install, upgrade, remove, purge, reinstall)
+- `apt.phase` - Operation phase (started, completed, detail)
+- `apt.result` - Operation result (success, in_progress)
+- `apt.is_package_operation` - Boolean indicating package operation
+- `apt.log_type` - Log file type (history, terminal)
+
+**Windows Update Events:**
+- `windowsupdate.operation` - Update operation (search, download, install, commit)
+- `windowsupdate.phase` - Operation phase (started, completed, failed)
+- `windowsupdate.result` - Operation result (success, in_progress, failed)
+- `windowsupdate.applicable` - Whether update is applicable (true/false)
+- `windowsupdate.has_kb` - Boolean indicating KB article reference
+- `windowsupdate.component` - Windows Update component
+- `windowsupdate.is_update_operation` - Boolean indicating update operation
 
 ## Usage
 
@@ -361,6 +399,23 @@ Original Fields → UDM Fields:
 - `severity: "INFO"` → `security_result.severity: "INFORMATIONAL"`
 - `dsc.result: "success"` → `security_result.action: "ALLOW"`
 
+**DNF Package Installation:**
+
+Log: `2024-01-15T10:30:45-0500 INFO Installed: nginx-1.20.1-1.el9.x86_64`
+
+Original Fields → CIM Fields:
+- `severity: "INFO"` → `signature: "Package Installed"`
+- `dnf.operation: "install"` → `action: "install"`, `object_category: "package"`
+- `dnf.phase: "completed"` → `result: "success"`
+- → `vendor: "Red Hat"`, `product: "dnf"`, `tag: "software"`
+
+Original Fields → UDM Fields:
+- → `metadata.event_type: "RESOURCE_CREATION"`
+- → `metadata.vendor_name: "Red Hat"`, `metadata.product_name: "DNF"`
+- → `target.resource.type: "package"`
+- `severity: "INFO"` → `security_result.severity: "INFORMATIONAL"`
+- `dnf.result: "success"` → `security_result.action: "ALLOW"`
+
 ## Customization
 
 ### Adding Event IDs
@@ -505,6 +560,33 @@ transform/journald_your_app:
 - DSC run started → CIM: Configuration, UDM: GENERIC_EVENT
 - Consistency check → CIM: Configuration, UDM: STATUS_UPDATE
 - DSC run complete → CIM: Configuration, UDM: GENERIC_EVENT
+
+### Package Management Events
+
+**DNF (RHEL 8+, Rocky Linux, Fedora)**
+- Package installed → CIM: Change, UDM: RESOURCE_CREATION
+- Package upgraded → CIM: Change, UDM: RESOURCE_MODIFICATION
+- Package removed → CIM: Change, UDM: RESOURCE_DELETION
+- Package downgraded → CIM: Change, UDM: RESOURCE_MODIFICATION
+- Package reinstalled → CIM: Change, UDM: RESOURCE_MODIFICATION
+
+**YUM (RHEL/CentOS 7)**
+- Package installed → CIM: Change, UDM: RESOURCE_CREATION
+- Package updated → CIM: Change, UDM: RESOURCE_MODIFICATION
+- Package erased → CIM: Change, UDM: RESOURCE_DELETION
+
+**APT (Debian, Ubuntu)**
+- Package installed → CIM: Change, UDM: RESOURCE_CREATION
+- Package upgraded → CIM: Change, UDM: RESOURCE_MODIFICATION
+- Package removed → CIM: Change, UDM: RESOURCE_DELETION
+- Package purged → CIM: Change, UDM: RESOURCE_DELETION
+- Package reinstalled → CIM: Change, UDM: RESOURCE_MODIFICATION
+
+**Windows Update**
+- Update search → CIM: Update, UDM: SCAN_UNCATEGORIZED
+- Update download → CIM: Update, UDM: RESOURCE_READ
+- Update install → CIM: Change/Update, UDM: RESOURCE_MODIFICATION
+- Update failed → CIM: Update (failure), UDM: RESOURCE_MODIFICATION (blocked)
 
 ## Additional Resources
 

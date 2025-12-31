@@ -1,0 +1,203 @@
+# OpenTelemetry Collector Configuration for DNF Package Manager Logs
+# This configuration ingests DNF logs and transforms them with Splunk CIM and Google SecOps UDM compliant field names
+# DNF is used on Fedora, RHEL 8+, Rocky Linux 8+, AlmaLinux 8+, and other modern RPM-based distributions
+
+receivers:
+  filelog:
+    include:
+      - /var/log/dnf.log
+      - /var/log/dnf.rpm.log
+      - /var/log/dnf.librepo.log
+    start_at: end
+
+    # Parse DNF log format: YYYY-MM-DDTHH:MM:SS±HHMM LEVEL message
+    operators:
+      # Parse the log line with regex
+      - type: regex_parser
+        regex: '^(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4})\s+(?P<severity>[A-Z]+)\s+(?P<message>.*)$'
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: '%Y-%m-%dT%H:%M:%S%z'
+        severity:
+          parse_from: attributes.severity
+          mapping:
+            debug: DEBUG
+            info: INFO
+            warning: WARN
+            error: ERROR
+            critical: CRITICAL
+
+      # Move message to body
+      - type: move
+        from: attributes.message
+        to: body
+
+processors:
+  # Extract structured information from DNF log messages
+  transform/dnf_extract:
+    log_statements:
+      - context: log
+        statements:
+          # Set source metadata
+          - set(attributes["log.source"], "dnf")
+          - set(attributes["log.source.type"], "filelog")
+          - set(attributes["dnf.message"], body) where body != nil
+          - set(attributes["log.file.path"], resource.attributes["log.file.path"]) where resource.attributes["log.file.path"] != nil
+
+  # Parse DNF operations and packages
+  transform/dnf_parse_operations:
+    log_statements:
+      - context: log
+        statements:
+          # Detect package operations
+          - set(attributes["dnf.operation"], "install") where IsMatch(body, "^Install(ing|ed):")
+          - set(attributes["dnf.operation"], "upgrade") where IsMatch(body, "^Upgrad(e|ing|ed):")
+          - set(attributes["dnf.operation"], "downgrade") where IsMatch(body, "^Downgrad(e|ing|ed):")
+          - set(attributes["dnf.operation"], "remove") where IsMatch(body, "^Eras(e|ing|ed):")
+          - set(attributes["dnf.operation"], "reinstall") where IsMatch(body, "^Reinstall(ing|ed):")
+          - set(attributes["dnf.operation"], "obsolete") where IsMatch(body, "^Obsolet(e|ing|ed):")
+
+          # Detect operation phase (ing = in progress, ed = completed)
+          - set(attributes["dnf.phase"], "started") where IsMatch(body, "(Installing|Upgrading|Erasing|Downgrading|Reinstalling):")
+          - set(attributes["dnf.phase"], "completed") where IsMatch(body, "(Installed|Upgraded|Erased|Downgraded|Reinstalled|Obsoleted):")
+
+          # Set result based on phase and severity
+          - set(attributes["dnf.result"], "success") where attributes["dnf.phase"] == "completed" and severity_text == "INFO"
+          - set(attributes["dnf.result"], "in_progress") where attributes["dnf.phase"] == "started"
+          - set(attributes["dnf.result"], "failed") where severity_text == "ERROR" or severity_text == "CRITICAL"
+
+          # Detect if this is a package operation
+          - set(attributes["dnf.is_package_operation"], true) where attributes["dnf.operation"] != nil
+
+  # Categorize DNF events
+  transform/dnf_categorize:
+    log_statements:
+      - context: log
+        statements:
+          # Set event category
+          - set(attributes["event.category"], "package") where attributes["dnf.is_package_operation"] == true
+          - set(attributes["event.category"], "package_management")
+
+          # Set event action
+          - set(attributes["event.action"], "package_install") where attributes["dnf.operation"] == "install"
+          - set(attributes["event.action"], "package_upgrade") where attributes["dnf.operation"] == "upgrade"
+          - set(attributes["event.action"], "package_remove") where attributes["dnf.operation"] == "remove"
+          - set(attributes["event.action"], "package_downgrade") where attributes["dnf.operation"] == "downgrade"
+          - set(attributes["event.action"], "package_reinstall") where attributes["dnf.operation"] == "reinstall"
+
+          # Set outcome
+          - set(attributes["event.outcome"], "success") where attributes["dnf.result"] == "success"
+          - set(attributes["event.outcome"], "failure") where attributes["dnf.result"] == "failed"
+          - set(attributes["event.outcome"], "unknown") where attributes["dnf.result"] == "in_progress"
+
+          # Set severity
+          - set(attributes["event.severity"], "debug") where severity_text == "DEBUG"
+          - set(attributes["event.severity"], "info") where severity_text == "INFO"
+          - set(attributes["event.severity"], "warning") where severity_text == "WARN"
+          - set(attributes["event.severity"], "error") where severity_text == "ERROR"
+          - set(attributes["event.severity"], "critical") where severity_text == "CRITICAL"
+
+  # Map to Splunk CIM fields
+  transform/dnf_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Red Hat DNF")
+          - set(attributes["vendor"], "Red Hat")
+          - set(attributes["product"], "dnf")
+
+          # CIM Signature
+          - set(attributes["signature"], "Package Installed") where attributes["dnf.operation"] == "install" and attributes["dnf.phase"] == "completed"
+          - set(attributes["signature"], "Package Installing") where attributes["dnf.operation"] == "install" and attributes["dnf.phase"] == "started"
+          - set(attributes["signature"], "Package Upgraded") where attributes["dnf.operation"] == "upgrade" and attributes["dnf.phase"] == "completed"
+          - set(attributes["signature"], "Package Upgrading") where attributes["dnf.operation"] == "upgrade" and attributes["dnf.phase"] == "started"
+          - set(attributes["signature"], "Package Removed") where attributes["dnf.operation"] == "remove" and attributes["dnf.phase"] == "completed"
+          - set(attributes["signature"], "Package Removing") where attributes["dnf.operation"] == "remove" and attributes["dnf.phase"] == "started"
+          - set(attributes["signature"], "Package Downgraded") where attributes["dnf.operation"] == "downgrade" and attributes["dnf.phase"] == "completed"
+          - set(attributes["signature"], "Package Reinstalled") where attributes["dnf.operation"] == "reinstall" and attributes["dnf.phase"] == "completed"
+
+          # CIM Action
+          - set(attributes["action"], "install") where attributes["dnf.operation"] == "install"
+          - set(attributes["action"], "upgrade") where attributes["dnf.operation"] == "upgrade"
+          - set(attributes["action"], "remove") where attributes["dnf.operation"] == "remove"
+          - set(attributes["action"], "downgrade") where attributes["dnf.operation"] == "downgrade"
+          - set(attributes["action"], "reinstall") where attributes["dnf.operation"] == "reinstall"
+
+          # CIM Result
+          - set(attributes["result"], "success") where attributes["event.outcome"] == "success"
+          - set(attributes["result"], "failure") where attributes["event.outcome"] == "failure"
+
+          # CIM Object
+          - set(attributes["object_category"], "package") where attributes["dnf.is_package_operation"] == true
+
+          # CIM Tag
+          - set(attributes["tag"], "software")
+          - set(attributes["tag"], "change") where attributes["dnf.is_package_operation"] == true
+
+          # CIM App
+          - set(attributes["app"], "dnf")
+
+  # Map to Google SecOps UDM fields
+  transform/dnf_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Red Hat")
+          - set(attributes["metadata.product_name"], "DNF")
+          - set(attributes["metadata.log_type"], "APPLICATION_LOG")
+
+          # Map to UDM event types
+          - set(attributes["metadata.event_type"], "RESOURCE_CREATION") where attributes["dnf.operation"] == "install" and attributes["dnf.phase"] == "completed"
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["dnf.operation"] == "upgrade" and attributes["dnf.phase"] == "completed"
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["dnf.operation"] == "downgrade" and attributes["dnf.phase"] == "completed"
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["dnf.operation"] == "reinstall" and attributes["dnf.phase"] == "completed"
+          - set(attributes["metadata.event_type"], "RESOURCE_DELETION") where attributes["dnf.operation"] == "remove" and attributes["dnf.phase"] == "completed"
+          - set(attributes["metadata.event_type"], "STATUS_UPDATE") where attributes["dnf.phase"] == "started"
+
+          # UDM Target (the package being managed)
+          - set(attributes["target.resource.type"], "package") where attributes["dnf.is_package_operation"] == true
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.outcome"] == "success"
+          - set(attributes["security_result.action"], "BLOCK") where attributes["event.outcome"] == "failure"
+
+          # Map severity to UDM levels
+          - set(attributes["security_result.severity"], "INFORMATIONAL") where severity_text == "DEBUG" or severity_text == "INFO"
+          - set(attributes["security_result.severity"], "LOW") where severity_text == "WARN"
+          - set(attributes["security_result.severity"], "MEDIUM") where severity_text == "ERROR"
+          - set(attributes["security_result.severity"], "HIGH") where severity_text == "CRITICAL"
+
+          # UDM Summary
+          - set(attributes["security_result.summary"], body) where body != nil
+
+exporters:
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to Splunk HEC
+  # splunk_hec:
+  #   token: "your-hec-token"
+  #   endpoint: "https://splunk:8088/services/collector"
+  #   source: "dnf"
+  #   sourcetype: "linux:dnf"
+  #   index: "os"
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors:
+        - transform/dnf_extract
+        - transform/dnf_parse_operations
+        - transform/dnf_categorize
+        - transform/dnf_cim
+        - transform/dnf_udm
+      exporters: [logging]

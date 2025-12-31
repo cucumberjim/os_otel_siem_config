@@ -1,0 +1,208 @@
+# OpenTelemetry Collector Configuration for APT Package Manager Logs
+# This configuration ingests APT logs and transforms them with Splunk CIM and Google SecOps UDM compliant field names
+# APT is used on Debian, Ubuntu, and other Debian-based distributions
+
+receivers:
+  filelog:
+    include:
+      - /var/log/apt/history.log
+      - /var/log/apt/term.log
+    start_at: end
+
+    # Use multiline parsing for APT history.log which has multi-line entries
+    multiline:
+      line_start_pattern: '^(Start-Date|Commandline|Install|Upgrade|Remove|Purge|End-Date):'
+
+processors:
+  # Extract structured information from APT log messages
+  transform/apt_extract:
+    log_statements:
+      - context: log
+        statements:
+          # Set source metadata
+          - set(attributes["log.source"], "apt")
+          - set(attributes["log.source.type"], "filelog")
+          - set(attributes["apt.message"], body) where body != nil
+          - set(attributes["log.file.path"], resource.attributes["log.file.path"]) where resource.attributes["log.file.path"] != nil
+
+          # Determine which log file this is from
+          - set(attributes["apt.log_type"], "history") where IsMatch(resource.attributes["log.file.path"], "history.log")
+          - set(attributes["apt.log_type"], "terminal") where IsMatch(resource.attributes["log.file.path"], "term.log")
+
+  # Parse APT operations from history.log
+  transform/apt_parse_operations:
+    log_statements:
+      - context: log
+        statements:
+          # Parse history.log format
+          # Detect operation start
+          - set(attributes["apt.operation_start"], true) where IsMatch(body, "^Start-Date:")
+
+          # Parse start date timestamp
+          - set(attributes["apt.start_time"], true) where IsMatch(body, "^Start-Date:")
+
+          # Parse commandline to determine operation type
+          - set(attributes["apt.operation"], "install") where IsMatch(body, "Commandline:.*apt(-get)? install")
+          - set(attributes["apt.operation"], "upgrade") where IsMatch(body, "Commandline:.*apt(-get)? upgrade")
+          - set(attributes["apt.operation"], "dist-upgrade") where IsMatch(body, "Commandline:.*apt(-get)? dist-upgrade")
+          - set(attributes["apt.operation"], "full-upgrade") where IsMatch(body, "Commandline:.*apt full-upgrade")
+          - set(attributes["apt.operation"], "remove") where IsMatch(body, "Commandline:.*apt(-get)? remove")
+          - set(attributes["apt.operation"], "purge") where IsMatch(body, "Commandline:.*apt(-get)? purge")
+          - set(attributes["apt.operation"], "autoremove") where IsMatch(body, "Commandline:.*apt(-get)? autoremove")
+
+          # Parse package operations from detail lines
+          - set(attributes["apt.detail_type"], "install") where IsMatch(body, "^Install:")
+          - set(attributes["apt.detail_type"], "upgrade") where IsMatch(body, "^Upgrade:")
+          - set(attributes["apt.detail_type"], "remove") where IsMatch(body, "^Remove:")
+          - set(attributes["apt.detail_type"], "purge") where IsMatch(body, "^Purge:")
+          - set(attributes["apt.detail_type"], "reinstall") where IsMatch(body, "^Reinstall:")
+
+          # Detect operation end
+          - set(attributes["apt.operation_end"], true) where IsMatch(body, "^End-Date:")
+
+          # Set phase based on markers
+          - set(attributes["apt.phase"], "started") where attributes["apt.operation_start"] == true
+          - set(attributes["apt.phase"], "completed") where attributes["apt.operation_end"] == true
+          - set(attributes["apt.phase"], "detail") where attributes["apt.detail_type"] != nil
+
+          # Set result (APT history.log only logs successful operations)
+          - set(attributes["apt.result"], "success") where attributes["apt.operation_end"] == true
+          - set(attributes["apt.result"], "in_progress") where attributes["apt.operation_start"] == true
+
+          # Detect if this is a package operation detail line
+          - set(attributes["apt.is_package_operation"], true) where attributes["apt.detail_type"] != nil
+
+  # Categorize APT events
+  transform/apt_categorize:
+    log_statements:
+      - context: log
+        statements:
+          # Set event category
+          - set(attributes["event.category"], "package") where attributes["apt.is_package_operation"] == true
+          - set(attributes["event.category"], "package_management") where attributes["apt.operation"] != nil
+
+          # Set event action based on detail type (more specific than operation)
+          - set(attributes["event.action"], "package_install") where attributes["apt.detail_type"] == "install"
+          - set(attributes["event.action"], "package_upgrade") where attributes["apt.detail_type"] == "upgrade"
+          - set(attributes["event.action"], "package_remove") where attributes["apt.detail_type"] == "remove"
+          - set(attributes["event.action"], "package_purge") where attributes["apt.detail_type"] == "purge"
+          - set(attributes["event.action"], "package_reinstall") where attributes["apt.detail_type"] == "reinstall"
+
+          # Also set based on operation for start/end markers
+          - set(attributes["event.action"], "operation_started") where attributes["apt.phase"] == "started"
+          - set(attributes["event.action"], "operation_completed") where attributes["apt.phase"] == "completed"
+
+          # Set outcome
+          - set(attributes["event.outcome"], "success") where attributes["apt.result"] == "success"
+          - set(attributes["event.outcome"], "success") where attributes["apt.is_package_operation"] == true
+          - set(attributes["event.outcome"], "unknown") where attributes["apt.result"] == "in_progress"
+
+          # Set severity (APT operations are informational)
+          - set(attributes["event.severity"], "info")
+          - set(severity_text, "INFO")
+
+  # Map to Splunk CIM fields
+  transform/apt_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Debian APT")
+          - set(attributes["vendor"], "Debian")
+          - set(attributes["product"], "apt")
+
+          # Override vendor for Ubuntu
+          - set(attributes["vendor"], "Ubuntu") where IsMatch(body, "ubuntu")
+          - set(attributes["vendor_product"], "Ubuntu APT") where IsMatch(body, "ubuntu")
+
+          # CIM Signature
+          - set(attributes["signature"], "Package Installed") where attributes["apt.detail_type"] == "install"
+          - set(attributes["signature"], "Package Upgraded") where attributes["apt.detail_type"] == "upgrade"
+          - set(attributes["signature"], "Package Removed") where attributes["apt.detail_type"] == "remove"
+          - set(attributes["signature"], "Package Purged") where attributes["apt.detail_type"] == "purge"
+          - set(attributes["signature"], "Package Reinstalled") where attributes["apt.detail_type"] == "reinstall"
+          - set(attributes["signature"], "Operation Started") where attributes["apt.phase"] == "started"
+          - set(attributes["signature"], "Operation Completed") where attributes["apt.phase"] == "completed"
+
+          # CIM Action
+          - set(attributes["action"], "install") where attributes["apt.detail_type"] == "install"
+          - set(attributes["action"], "upgrade") where attributes["apt.detail_type"] == "upgrade"
+          - set(attributes["action"], "remove") where attributes["apt.detail_type"] == "remove"
+          - set(attributes["action"], "purge") where attributes["apt.detail_type"] == "purge"
+          - set(attributes["action"], "reinstall") where attributes["apt.detail_type"] == "reinstall"
+
+          # CIM Result
+          - set(attributes["result"], "success") where attributes["event.outcome"] == "success"
+
+          # CIM Object
+          - set(attributes["object_category"], "package") where attributes["apt.is_package_operation"] == true
+
+          # CIM Tag
+          - set(attributes["tag"], "software")
+          - set(attributes["tag"], "change") where attributes["apt.is_package_operation"] == true
+
+          # CIM App
+          - set(attributes["app"], "apt")
+
+  # Map to Google SecOps UDM fields
+  transform/apt_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Debian")
+          - set(attributes["metadata.product_name"], "APT")
+          - set(attributes["metadata.log_type"], "APPLICATION_LOG")
+
+          # Override for Ubuntu
+          - set(attributes["metadata.vendor_name"], "Ubuntu") where IsMatch(body, "ubuntu")
+
+          # Map to UDM event types
+          - set(attributes["metadata.event_type"], "RESOURCE_CREATION") where attributes["apt.detail_type"] == "install"
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["apt.detail_type"] == "upgrade"
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["apt.detail_type"] == "reinstall"
+          - set(attributes["metadata.event_type"], "RESOURCE_DELETION") where attributes["apt.detail_type"] == "remove"
+          - set(attributes["metadata.event_type"], "RESOURCE_DELETION") where attributes["apt.detail_type"] == "purge"
+          - set(attributes["metadata.event_type"], "STATUS_UPDATE") where attributes["apt.phase"] == "started" or attributes["apt.phase"] == "completed"
+
+          # UDM Target (the package being managed)
+          - set(attributes["target.resource.type"], "package") where attributes["apt.is_package_operation"] == true
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.outcome"] == "success"
+
+          # Map severity to UDM levels
+          - set(attributes["security_result.severity"], "INFORMATIONAL")
+
+          # UDM Summary
+          - set(attributes["security_result.summary"], body) where body != nil
+
+exporters:
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to Splunk HEC
+  # splunk_hec:
+  #   token: "your-hec-token"
+  #   endpoint: "https://splunk:8088/services/collector"
+  #   source: "apt"
+  #   sourcetype: "linux:apt"
+  #   index: "os"
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors:
+        - transform/apt_extract
+        - transform/apt_parse_operations
+        - transform/apt_categorize
+        - transform/apt_cim
+        - transform/apt_udm
+      exporters: [logging]

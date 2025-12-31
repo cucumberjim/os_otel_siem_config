@@ -1,0 +1,170 @@
+# OpenTelemetry Collector Configuration for YUM Package Manager Logs
+# This configuration ingests YUM logs and transforms them with Splunk CIM and Google SecOps UDM compliant field names
+# YUM is used on RHEL/CentOS 7 and older RPM-based distributions
+
+receivers:
+  filelog:
+    include:
+      - /var/log/yum.log
+    start_at: end
+
+    # Parse YUM log format: Mon DD HH:MM:SS Action: package-version-release.arch
+    operators:
+      # Parse the log line with regex
+      - type: regex_parser
+        regex: '^(?P<timestamp>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(?P<message>.*)$'
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: '%b %_d %H:%M:%S'
+        severity:
+          parse_from: attributes.severity
+
+      # Move message to body
+      - type: move
+        from: attributes.message
+        to: body
+
+processors:
+  # Extract structured information from YUM log messages
+  transform/yum_extract:
+    log_statements:
+      - context: log
+        statements:
+          # Set source metadata
+          - set(attributes["log.source"], "yum")
+          - set(attributes["log.source.type"], "filelog")
+          - set(attributes["yum.message"], body) where body != nil
+          - set(attributes["log.file.path"], resource.attributes["log.file.path"]) where resource.attributes["log.file.path"] != nil
+
+          # YUM logs don't include year, add current year context
+          - set(attributes["timestamp.note"], "Year not in log format, using collector system year")
+
+  # Parse YUM operations and packages
+  transform/yum_parse_operations:
+    log_statements:
+      - context: log
+        statements:
+          # Detect package operations
+          - set(attributes["yum.operation"], "install") where IsMatch(body, "^Installed:")
+          - set(attributes["yum.operation"], "update") where IsMatch(body, "^Updated:")
+          - set(attributes["yum.operation"], "remove") where IsMatch(body, "^Erased:")
+
+          # YUM logs only show completed operations
+          - set(attributes["yum.phase"], "completed") where attributes["yum.operation"] != nil
+
+          # Set result (YUM only logs successful operations to yum.log)
+          - set(attributes["yum.result"], "success") where attributes["yum.operation"] != nil
+
+          # Detect if this is a package operation
+          - set(attributes["yum.is_package_operation"], true) where attributes["yum.operation"] != nil
+
+  # Categorize YUM events
+  transform/yum_categorize:
+    log_statements:
+      - context: log
+        statements:
+          # Set event category
+          - set(attributes["event.category"], "package") where attributes["yum.is_package_operation"] == true
+          - set(attributes["event.category"], "package_management")
+
+          # Set event action
+          - set(attributes["event.action"], "package_install") where attributes["yum.operation"] == "install"
+          - set(attributes["event.action"], "package_update") where attributes["yum.operation"] == "update"
+          - set(attributes["event.action"], "package_remove") where attributes["yum.operation"] == "remove"
+
+          # Set outcome (YUM only logs successful operations)
+          - set(attributes["event.outcome"], "success") where attributes["yum.operation"] != nil
+
+          # Set severity (all YUM operations are informational)
+          - set(attributes["event.severity"], "info")
+          - set(severity_text, "INFO")
+
+  # Map to Splunk CIM fields
+  transform/yum_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Red Hat YUM")
+          - set(attributes["vendor"], "Red Hat")
+          - set(attributes["product"], "yum")
+
+          # CIM Signature
+          - set(attributes["signature"], "Package Installed") where attributes["yum.operation"] == "install"
+          - set(attributes["signature"], "Package Updated") where attributes["yum.operation"] == "update"
+          - set(attributes["signature"], "Package Removed") where attributes["yum.operation"] == "remove"
+
+          # CIM Action
+          - set(attributes["action"], "install") where attributes["yum.operation"] == "install"
+          - set(attributes["action"], "update") where attributes["yum.operation"] == "update"
+          - set(attributes["action"], "remove") where attributes["yum.operation"] == "remove"
+
+          # CIM Result
+          - set(attributes["result"], "success") where attributes["event.outcome"] == "success"
+
+          # CIM Object
+          - set(attributes["object_category"], "package") where attributes["yum.is_package_operation"] == true
+
+          # CIM Tag
+          - set(attributes["tag"], "software")
+          - set(attributes["tag"], "change") where attributes["yum.is_package_operation"] == true
+
+          # CIM App
+          - set(attributes["app"], "yum")
+
+  # Map to Google SecOps UDM fields
+  transform/yum_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Red Hat")
+          - set(attributes["metadata.product_name"], "YUM")
+          - set(attributes["metadata.log_type"], "APPLICATION_LOG")
+
+          # Map to UDM event types
+          - set(attributes["metadata.event_type"], "RESOURCE_CREATION") where attributes["yum.operation"] == "install"
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["yum.operation"] == "update"
+          - set(attributes["metadata.event_type"], "RESOURCE_DELETION") where attributes["yum.operation"] == "remove"
+
+          # UDM Target (the package being managed)
+          - set(attributes["target.resource.type"], "package") where attributes["yum.is_package_operation"] == true
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.outcome"] == "success"
+
+          # Map severity to UDM levels
+          - set(attributes["security_result.severity"], "INFORMATIONAL")
+
+          # UDM Summary
+          - set(attributes["security_result.summary"], body) where body != nil
+
+exporters:
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to Splunk HEC
+  # splunk_hec:
+  #   token: "your-hec-token"
+  #   endpoint: "https://splunk:8088/services/collector"
+  #   source: "yum"
+  #   sourcetype: "linux:yum"
+  #   index: "os"
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors:
+        - transform/yum_extract
+        - transform/yum_parse_operations
+        - transform/yum_categorize
+        - transform/yum_cim
+        - transform/yum_udm
+      exporters: [logging]
