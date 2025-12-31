@@ -1,0 +1,292 @@
+# OpenTelemetry Collector Configuration for Cinc Client Logs
+# This configuration ingests Cinc/Chef client logs and transforms them with Splunk CIM and Google SecOps UDM compliant field names
+# Cinc is the community-maintained distribution of Chef Infra Client
+
+receivers:
+  filelog:
+    include:
+      - /var/log/cinc-client/client.log
+      - /var/log/chef/client.log  # Also support Chef Infra Client logs
+    start_at: end
+
+    # Parse Cinc/Chef log format: [timestamp] LEVEL: message
+    operators:
+      # Parse the log line with regex to extract timestamp, level, and message
+      - type: regex_parser
+        regex: '^\[(?P<timestamp>[^\]]+)\]\s+(?P<severity>[A-Z]+):\s+(?P<message>.*)$'
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: '%Y-%m-%dT%H:%M:%S%z'
+        severity:
+          parse_from: attributes.severity
+          mapping:
+            debug: DEBUG
+            info: INFO
+            warn: WARN
+            warning: WARN
+            error: ERROR
+            fatal: FATAL
+
+      # Move message to body
+      - type: move
+        from: attributes.message
+        to: body
+
+processors:
+  # Extract structured information from Cinc/Chef log messages
+  transform/cinc_extract:
+    log_statements:
+      - context: log
+        statements:
+          # Set source metadata
+          - set(attributes["log.source"], "cinc.client") where IsMatch(resource.attributes["log.file.path"], "cinc")
+          - set(attributes["log.source"], "chef.client") where IsMatch(resource.attributes["log.file.path"], "chef")
+          - set(attributes["log.source.type"], "filelog")
+
+          # Store original message
+          - set(attributes["cinc.message"], body) where body != nil
+          - set(attributes["log.file.path"], resource.attributes["log.file.path"]) where resource.attributes["log.file.path"] != nil
+
+  # Parse resource operations from log messages
+  transform/cinc_parse_resources:
+    log_statements:
+      - context: log
+        statements:
+          # Parse "Processing resource_type[resource_name] action verb (cookbook::recipe line N)" pattern
+          - set(attributes["cinc.processing"], true) where IsMatch(body, "Processing ")
+
+          # Parse "resource_type[resource_name] action_result" patterns (e.g., "template[/etc/nginx.conf] created file")
+          # Extract resource type and name from patterns like: resource_type[resource_name]
+          - set(attributes["cinc.resource.type"], "template") where IsMatch(body, "template\\[")
+          - set(attributes["cinc.resource.type"], "package") where IsMatch(body, "package\\[")
+          - set(attributes["cinc.resource.type"], "service") where IsMatch(body, "service\\[")
+          - set(attributes["cinc.resource.type"], "file") where IsMatch(body, "(?:^|\\s)file\\[")
+          - set(attributes["cinc.resource.type"], "directory") where IsMatch(body, "directory\\[")
+          - set(attributes["cinc.resource.type"], "cookbook_file") where IsMatch(body, "cookbook_file\\[")
+          - set(attributes["cinc.resource.type"], "remote_file") where IsMatch(body, "remote_file\\[")
+          - set(attributes["cinc.resource.type"], "execute") where IsMatch(body, "execute\\[")
+          - set(attributes["cinc.resource.type"], "script") where IsMatch(body, "script\\[")
+          - set(attributes["cinc.resource.type"], "bash") where IsMatch(body, "bash\\[")
+          - set(attributes["cinc.resource.type"], "user") where IsMatch(body, "user\\[")
+          - set(attributes["cinc.resource.type"], "group") where IsMatch(body, "group\\[")
+          - set(attributes["cinc.resource.type"], "cron") where IsMatch(body, "cron\\[")
+          - set(attributes["cinc.resource.type"], "mount") where IsMatch(body, "mount\\[")
+          - set(attributes["cinc.resource.type"], "link") where IsMatch(body, "link\\[")
+          - set(attributes["cinc.resource.type"], "git") where IsMatch(body, "git\\[")
+
+          # Detect actions from common patterns
+          - set(attributes["cinc.action"], "create") where IsMatch(body, " action create")
+          - set(attributes["cinc.action"], "install") where IsMatch(body, " action install")
+          - set(attributes["cinc.action"], "delete") where IsMatch(body, " action delete")
+          - set(attributes["cinc.action"], "remove") where IsMatch(body, " action remove")
+          - set(attributes["cinc.action"], "start") where IsMatch(body, " action start")
+          - set(attributes["cinc.action"], "stop") where IsMatch(body, " action stop")
+          - set(attributes["cinc.action"], "restart") where IsMatch(body, " action restart")
+          - set(attributes["cinc.action"], "reload") where IsMatch(body, " action reload")
+          - set(attributes["cinc.action"], "enable") where IsMatch(body, " action enable")
+          - set(attributes["cinc.action"], "disable") where IsMatch(body, " action disable")
+          - set(attributes["cinc.action"], "run") where IsMatch(body, " action run")
+
+          # Detect action results (past tense verbs indicate completion)
+          - set(attributes["cinc.result"], "created") where IsMatch(body, " created ")
+          - set(attributes["cinc.result"], "installed") where IsMatch(body, " installed ")
+          - set(attributes["cinc.result"], "updated") where IsMatch(body, " updated ")
+          - set(attributes["cinc.result"], "deleted") where IsMatch(body, " deleted ")
+          - set(attributes["cinc.result"], "removed") where IsMatch(body, " removed ")
+          - set(attributes["cinc.result"], "started") where IsMatch(body, " started ")
+          - set(attributes["cinc.result"], "stopped") where IsMatch(body, " stopped ")
+          - set(attributes["cinc.result"], "restarted") where IsMatch(body, " restarted ")
+          - set(attributes["cinc.result"], "reloaded") where IsMatch(body, " reloaded ")
+          - set(attributes["cinc.result"], "enabled") where IsMatch(body, " enabled ")
+          - set(attributes["cinc.result"], "disabled") where IsMatch(body, " disabled ")
+          - set(attributes["cinc.result"], "executed") where IsMatch(body, " executed ")
+          - set(attributes["cinc.result"], "unchanged") where IsMatch(body, "up to date")
+          - set(attributes["cinc.result"], "unchanged") where IsMatch(body, "up-to-date")
+          - set(attributes["cinc.result"], "skipped") where IsMatch(body, " skipped ")
+          - set(attributes["cinc.result"], "failed") where IsMatch(body, " failed ")
+          - set(attributes["cinc.result"], "error") where IsMatch(body, " had an error")
+
+          # Determine if resource was changed (modified state)
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "created"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "installed"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "updated"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "deleted"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "removed"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "started"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "stopped"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "restarted"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "reloaded"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "enabled"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "disabled"
+          - set(attributes["cinc.changed"], true) where attributes["cinc.result"] == "executed"
+          - set(attributes["cinc.changed"], false) where attributes["cinc.result"] == "unchanged"
+          - set(attributes["cinc.changed"], false) where attributes["cinc.result"] == "skipped"
+
+          # Parse cookbook and recipe information from "(cookbook::recipe line N)" pattern
+          - set(attributes["cinc.cookbook_info"], true) where IsMatch(body, "\\([^)]+::[^)]+\\)")
+
+  # Categorize events and set severity
+  transform/cinc_categorize:
+    log_statements:
+      - context: log
+        statements:
+          # Categorize by message content
+          - set(attributes["event.category"], "run") where IsMatch(body, "Starting .* Client")
+          - set(attributes["event.category"], "run") where IsMatch(body, "Client Run complete")
+          - set(attributes["event.category"], "run") where IsMatch(body, "Run List is")
+          - set(attributes["event.category"], "resource") where attributes["cinc.resource.type"] != nil
+          - set(attributes["event.category"], "configuration") where attributes["cinc.resource.type"] != nil
+
+          # Set event action based on operation
+          - set(attributes["event.action"], "run_start") where IsMatch(body, "Starting .* Client")
+          - set(attributes["event.action"], "run_complete") where IsMatch(body, "Client Run complete")
+          - set(attributes["event.action"], "resource_modified") where attributes["cinc.changed"] == true
+          - set(attributes["event.action"], "resource_unchanged") where attributes["cinc.changed"] == false
+          - set(attributes["event.action"], "resource_failed") where attributes["cinc.result"] == "failed" or attributes["cinc.result"] == "error"
+
+          # Set outcome based on severity and result
+          - set(attributes["event.outcome"], "success") where severity_text == "INFO" and attributes["cinc.result"] != "failed" and attributes["cinc.result"] != "error"
+          - set(attributes["event.outcome"], "success") where attributes["cinc.result"] == "created" or attributes["cinc.result"] == "installed" or attributes["cinc.result"] == "updated"
+          - set(attributes["event.outcome"], "success") where attributes["cinc.result"] == "unchanged"
+          - set(attributes["event.outcome"], "failure") where severity_text == "ERROR" or severity_text == "FATAL"
+          - set(attributes["event.outcome"], "failure") where attributes["cinc.result"] == "failed" or attributes["cinc.result"] == "error"
+
+          # Set default severity mapping
+          - set(attributes["event.severity"], "debug") where severity_text == "DEBUG"
+          - set(attributes["event.severity"], "info") where severity_text == "INFO"
+          - set(attributes["event.severity"], "warning") where severity_text == "WARN"
+          - set(attributes["event.severity"], "error") where severity_text == "ERROR"
+          - set(attributes["event.severity"], "critical") where severity_text == "FATAL"
+
+  # Map to Splunk CIM fields
+  transform/cinc_cim:
+    log_statements:
+      - context: log
+        statements:
+          # Vendor/Product identification
+          - set(attributes["vendor_product"], "Cinc Client")
+          - set(attributes["vendor"], "Cinc Project")
+          - set(attributes["product"], "cinc-client")
+
+          # Override for Chef (not Cinc) logs
+          - set(attributes["vendor"], "Chef Software") where IsMatch(resource.attributes["log.file.path"], "chef")
+          - set(attributes["vendor_product"], "Chef Infra Client") where IsMatch(resource.attributes["log.file.path"], "chef")
+          - set(attributes["product"], "chef-client") where IsMatch(resource.attributes["log.file.path"], "chef")
+
+          # CIM Signature (event description)
+          - set(attributes["signature"], "Client Run Started") where attributes["event.action"] == "run_start"
+          - set(attributes["signature"], "Client Run Complete") where attributes["event.action"] == "run_complete"
+          - set(attributes["signature"], "Resource Created") where attributes["cinc.result"] == "created"
+          - set(attributes["signature"], "Package Installed") where attributes["cinc.result"] == "installed"
+          - set(attributes["signature"], "Resource Updated") where attributes["cinc.result"] == "updated"
+          - set(attributes["signature"], "Resource Deleted") where attributes["cinc.result"] == "deleted" or attributes["cinc.result"] == "removed"
+          - set(attributes["signature"], "Service Started") where attributes["cinc.result"] == "started"
+          - set(attributes["signature"], "Service Stopped") where attributes["cinc.result"] == "stopped"
+          - set(attributes["signature"], "Service Restarted") where attributes["cinc.result"] == "restarted"
+          - set(attributes["signature"], "Resource Unchanged") where attributes["cinc.result"] == "unchanged"
+          - set(attributes["signature"], "Resource Failed") where attributes["cinc.result"] == "failed" or attributes["cinc.result"] == "error"
+          - set(attributes["signature"], "Configuration Management") where attributes["event.category"] == "configuration" and attributes["signature"] == nil
+
+          # CIM Action
+          - set(attributes["action"], "create") where attributes["cinc.result"] == "created"
+          - set(attributes["action"], "install") where attributes["cinc.result"] == "installed"
+          - set(attributes["action"], "update") where attributes["cinc.result"] == "updated"
+          - set(attributes["action"], "delete") where attributes["cinc.result"] == "deleted" or attributes["cinc.result"] == "removed"
+          - set(attributes["action"], "start") where attributes["cinc.result"] == "started"
+          - set(attributes["action"], "stop") where attributes["cinc.result"] == "stopped"
+          - set(attributes["action"], "restart") where attributes["cinc.result"] == "restarted"
+          - set(attributes["action"], "allowed") where attributes["cinc.result"] == "unchanged"
+          - set(attributes["action"], "failure") where attributes["cinc.result"] == "failed" or attributes["cinc.result"] == "error"
+
+          # CIM Result
+          - set(attributes["result"], "success") where attributes["event.outcome"] == "success"
+          - set(attributes["result"], "failure") where attributes["event.outcome"] == "failure"
+
+          # CIM Object (the resource being managed)
+          - set(attributes["object_category"], attributes["cinc.resource.type"]) where attributes["cinc.resource.type"] != nil
+
+          # CIM Tag
+          - set(attributes["tag"], "configuration")
+          - set(attributes["tag"], "change") where attributes["cinc.changed"] == true
+
+          # CIM App
+          - set(attributes["app"], "cinc-client") where IsMatch(resource.attributes["log.file.path"], "cinc")
+          - set(attributes["app"], "chef-client") where IsMatch(resource.attributes["log.file.path"], "chef")
+
+  # Map to Google SecOps UDM fields
+  transform/cinc_udm:
+    log_statements:
+      - context: log
+        statements:
+          # UDM Metadata
+          - set(attributes["metadata.vendor_name"], "Cinc Project")
+          - set(attributes["metadata.product_name"], "cinc-client")
+          - set(attributes["metadata.log_type"], "APPLICATION_LOG")
+
+          # Override for Chef logs
+          - set(attributes["metadata.vendor_name"], "Chef Software") where IsMatch(resource.attributes["log.file.path"], "chef")
+          - set(attributes["metadata.product_name"], "chef-client") where IsMatch(resource.attributes["log.file.path"], "chef")
+
+          # Map to UDM event types based on resource operations
+          - set(attributes["metadata.event_type"], "RESOURCE_CREATION") where attributes["cinc.result"] == "created"
+          - set(attributes["metadata.event_type"], "RESOURCE_CREATION") where attributes["cinc.result"] == "installed"
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["cinc.result"] == "updated"
+          - set(attributes["metadata.event_type"], "RESOURCE_MODIFICATION") where attributes["cinc.result"] == "started" or attributes["cinc.result"] == "stopped" or attributes["cinc.result"] == "restarted"
+          - set(attributes["metadata.event_type"], "RESOURCE_DELETION") where attributes["cinc.result"] == "deleted" or attributes["cinc.result"] == "removed"
+          - set(attributes["metadata.event_type"], "SETTING_MODIFICATION") where attributes["event.category"] == "configuration" and attributes["cinc.changed"] == true
+          - set(attributes["metadata.event_type"], "SETTING_MODIFICATION") where attributes["cinc.result"] == "enabled" or attributes["cinc.result"] == "disabled"
+          - set(attributes["metadata.event_type"], "STATUS_UPDATE") where attributes["cinc.result"] == "unchanged"
+          - set(attributes["metadata.event_type"], "GENERIC_EVENT") where attributes["event.category"] == "run"
+
+          # UDM Target (the resource being managed)
+          - set(attributes["target.resource.type"], attributes["cinc.resource.type"]) where attributes["cinc.resource.type"] != nil
+          - set(attributes["target.resource.attribute.labels"], attributes["cinc.action"]) where attributes["cinc.action"] != nil
+
+          # UDM Security Result
+          - set(attributes["security_result.action"], "ALLOW") where attributes["event.outcome"] == "success"
+          - set(attributes["security_result.action"], "BLOCK") where attributes["event.outcome"] == "failure"
+
+          # Map severity to UDM severity levels
+          - set(attributes["security_result.severity"], "INFORMATIONAL") where severity_text == "DEBUG" or severity_text == "INFO"
+          - set(attributes["security_result.severity"], "LOW") where severity_text == "WARN"
+          - set(attributes["security_result.severity"], "MEDIUM") where severity_text == "ERROR"
+          - set(attributes["security_result.severity"], "HIGH") where severity_text == "FATAL"
+
+          # UDM Summary
+          - set(attributes["security_result.summary"], body) where body != nil
+
+exporters:
+  # Configure your desired exporter here
+  logging:
+    verbosity: detailed
+
+  # Example: Export to OTLP endpoint
+  # otlp:
+  #   endpoint: "your-otlp-endpoint:4317"
+  #   tls:
+  #     insecure: false
+
+  # Example: Export to Splunk HEC
+  # splunk_hec:
+  #   token: "your-hec-token"
+  #   endpoint: "https://splunk:8088/services/collector"
+  #   source: "cinc-client"
+  #   sourcetype: "cinc:client"
+  #   index: "main"
+
+  # Example: Export to Google SecOps (Chronicle)
+  # googlecloud:
+  #   project: "your-project-id"
+  #   log_name: "cinc_client"
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors:
+        - transform/cinc_extract
+        - transform/cinc_parse_resources
+        - transform/cinc_categorize
+        - transform/cinc_cim
+        - transform/cinc_udm
+      exporters: [logging]

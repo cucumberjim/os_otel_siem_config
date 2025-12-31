@@ -34,6 +34,12 @@ These configurations use the OpenTelemetry Collector to ingest event logs and tr
 | `linux-auditd-config.yaml` | /var/log/audit/audit.log | Linux auditd events with SYSCALL, authentication, process execution |
 | `linux-journald-config.yaml` | systemd journal | Core OS services (sshd, sudo, systemd, firewall, network) |
 
+### Configuration Management Logs
+
+| Configuration File | Log Source | Description |
+|-------------------|------------|-------------|
+| `cinc-client-config.yaml` | /var/log/cinc-client/client.log, /var/log/chef/client.log | Cinc/Chef Infra Client resource operations and run logs |
+
 ## Features
 
 ### Event Processing
@@ -73,7 +79,7 @@ All configurations include mappings to [Splunk Common Information Model](https:/
 
 #### Change Data Model Fields
 - `object` - Object being modified
-- `object_category` - Type of object (file, service, user, etc.)
+- `object_category` - Type of object (file, service, user, package, template, etc.)
 - `object_path` - Path to object
 
 ### Google SecOps UDM Compliance
@@ -101,6 +107,7 @@ All configurations include mappings to [Google SecOps Unified Data Model](https:
 - `target.user.user_display_name` - Target username
 - `target.file.full_path` - File path
 - `target.resource.name` - Resource name (service, etc.)
+- `target.resource.type` - Resource type (for configuration management)
 
 #### Security Result Fields
 - `security_result.action` - ALLOW, BLOCK, etc.
@@ -167,6 +174,14 @@ All configurations include mappings to [Google SecOps Unified Data Model](https:
 - `journal.unit`, `journal.syslog_identifier` - Systemd unit and identifier
 - `journal.priority` - Syslog priority
 - `severity` - Mapped severity (emergency, alert, critical, error, warning, notice, info, debug)
+
+**Cinc/Chef Client Events:**
+- `cinc.resource.type` - Resource type (template, package, service, file, etc.)
+- `cinc.action` - Action being performed (create, install, delete, start, stop, etc.)
+- `cinc.result` - Operation result (created, installed, updated, unchanged, failed, etc.)
+- `cinc.changed` - Whether the resource was modified (true/false)
+- `cinc.processing` - Indicates resource processing event
+- `cinc.cookbook_info` - Contains cookbook/recipe information
 
 ## Usage
 
@@ -296,6 +311,26 @@ Original Fields → UDM Fields:
 - `cmd: "bash script.sh"` → `principal.process.command_line: "bash script.sh"`
 - → `security_result.action: "ALLOW"`, `security_result.severity: "LOW"`
 
+### Configuration Management Mapping
+
+**Cinc/Chef Client Package Installation:**
+
+Log: `[2024-01-15T10:30:50-05:00] INFO: package[nginx] installed version 1.20.1`
+
+Original Fields → CIM Fields:
+- `severity: "INFO"` → `signature: "Package Installed"`
+- `cinc.resource.type: "package"` → `object_category: "package"`
+- `cinc.result: "installed"` → `action: "install"`, `result: "success"`
+- `cinc.changed: true` → `tag: "change"`
+- → `vendor: "Cinc Project"`, `product: "cinc-client"`
+
+Original Fields → UDM Fields:
+- → `metadata.event_type: "RESOURCE_CREATION"`
+- → `metadata.vendor_name: "Cinc Project"`, `metadata.product_name: "cinc-client"`
+- `cinc.resource.type: "package"` → `target.resource.type: "package"`
+- `severity: "INFO"` → `security_result.severity: "INFORMATIONAL"`
+- `cinc.result: "installed"` → `security_result.action: "ALLOW"`
+
 ## Customization
 
 ### Adding Event IDs
@@ -410,6 +445,21 @@ transform/journald_your_app:
 
 **Service Events**
 - SERVICE_START, SERVICE_STOP → CIM: Change, UDM: SERVICE_MODIFICATION
+
+### Cinc/Chef Client Events
+
+**Resource Operations**
+- Resource created → CIM: Change, UDM: RESOURCE_CREATION
+- Resource installed (packages) → CIM: Change, UDM: RESOURCE_CREATION
+- Resource updated → CIM: Change, UDM: RESOURCE_MODIFICATION
+- Resource deleted/removed → CIM: Change, UDM: RESOURCE_DELETION
+- Service started/stopped/restarted → CIM: Change, UDM: RESOURCE_MODIFICATION
+- Resource unchanged → CIM: Change, UDM: STATUS_UPDATE
+- Configuration changed → CIM: Change, UDM: SETTING_MODIFICATION
+
+**Client Run Events**
+- Client run started → CIM: Configuration, UDM: GENERIC_EVENT
+- Client run complete → CIM: Configuration, UDM: GENERIC_EVENT
 
 ## Additional Resources
 
