@@ -1,0 +1,88 @@
+# OpenTelemetry Collector Configuration - Attribute Key Sanitization
+#
+# Purpose: Sanitize attribute key names for compatibility with OpenSearch Data Prepper's
+# `flatten` processor operator, which requires keys to contain only the characters:
+#   alphanumeric (a-z A-Z 0-9), period (.), hyphen (-), underscore (_), at (@), slash (/)
+#
+# What this config does:
+#   1. Replaces any run of characters NOT in [a-zA-Z0-9._@/-] with a single underscore
+#   2. Strips any remaining leading underscores from the resulting key name
+#   3. Strips any remaining trailing underscores from the resulting key name
+#
+# Nested map handling:
+#   OTTL does not automatically recurse into nested map values inside attributes.
+#   If you have attributes whose values are themselves maps, you must add an explicit
+#   replace_all_keys call for each known nested map key (see the "placeholder" example
+#   at the bottom of the statements block).
+#
+# Integration: Add transform/sanitize_attribute_keys to your pipeline's processors list,
+# typically as the last step before your exporter.
+
+receivers:
+  # Replace with your actual receiver (filelog, windowseventlog, otlp, etc.)
+  filelog/example:
+    include:
+      - /var/log/example.log
+    start_at: end
+
+processors:
+  transform/sanitize_attribute_keys:
+    # error_mode: ignore is required so that nested-map statements do not hard-fail
+    # when the target key is absent or its value is not a map.
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+
+          # ── Top-level attributes ─────────────────────────────────────────────────
+          #
+          # Step 1: Replace each run of characters outside [a-zA-Z0-9._@/-] with "_".
+          #         Using the + quantifier collapses consecutive invalid characters
+          #         into a single underscore (e.g. "foo##bar" → "foo_bar").
+          - replace_all_keys(attributes, "[^a-zA-Z0-9._@/\\-]+", "_")
+
+          # Step 2: Strip one or more leading underscores from each key name.
+          #         Handles underscores that were either originally present or produced
+          #         by Step 1 (e.g. a key starting with "!" becomes "_…" → stripped).
+          - replace_all_keys(attributes, "^_+", "")
+
+          # Step 3: Strip one or more trailing underscores from each key name.
+          - replace_all_keys(attributes, "_+$", "")
+
+          # ── Nested map under attributes["placeholder"] ───────────────────────────
+          #
+          # If an attribute value is itself a map, apply the same three steps to the
+          # keys of that inner map.  Replace "placeholder" with the actual attribute
+          # key name whose value is a nested map object.
+          #
+          # Example: if your log record has
+          #   attributes:
+          #     placeholder:
+          #       "bad key!": "value1"
+          #       "another#key": "value2"
+          # the statements below will rename those inner keys to
+          #   "bad_key" and "another_key" respectively.
+          #
+          # Add one set of three statements per additional known nested map key.
+          - replace_all_keys(attributes["placeholder"], "[^a-zA-Z0-9._@/\\-]+", "_")
+          - replace_all_keys(attributes["placeholder"], "^_+", "")
+          - replace_all_keys(attributes["placeholder"], "_+$", "")
+
+exporters:
+  # Replace with your actual exporter configuration
+  logging:
+    verbosity: detailed
+
+  # Example: OpenSearch Data Prepper OTLP endpoint
+  # otlp:
+  #   endpoint: "your-dataprepper-host:21890"
+  #   tls:
+  #     insecure: true
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog/example]
+      processors:
+        - transform/sanitize_attribute_keys
+      exporters: [logging]
